@@ -99,6 +99,46 @@ export interface IndexedVariable {
   description: string | null;
   scopes: string | null;  // JSON array
   last_synced: string;
+  // Enhanced fields (v2)
+  tailwind_name: string | null;      // e.g., 'slate', 'blue', 'emerald'
+  tailwind_shade: string | null;     // e.g., '50', '100', '500', '900'
+  color_system: string | null;       // 'daisyui', 'tailwind', 'custom', 'brand'
+  semantic_role: string | null;      // 'background', 'foreground', 'border', 'accent', 'interactive'
+  token_type: string | null;         // 'color', 'spacing', 'typography', 'radius', 'shadow', 'opacity', 'boolean', 'string'
+  css_variable: string | null;       // CSS var name: '--color-primary', '--spacing-4'
+  tailwind_class: string | null;     // Direct Tailwind class: 'bg-primary', 'p-4', 'rounded-lg'
+  hsl: string | null;                // HSL color value
+  is_alias: number;                  // 1 if this variable references another variable
+  alias_target_id: string | null;    // ID of the variable this aliases
+  usage_count: number;               // How many nodes use this variable
+}
+
+export interface VariableBinding {
+  id: number;
+  node_id: string;
+  variable_id: string;
+  property: string;           // 'fills', 'strokes', 'width', 'height', 'gap', 'padding', etc.
+  property_index: number;
+  field: string | null;       // 'color', 'x', 'y', 'blur', 'spread'
+  bound_at: string;
+  last_verified: string;
+}
+
+export interface VariableModeValue {
+  id: number;
+  variable_id: string;
+  mode_id: string;
+  mode_name: string | null;
+  raw_value: string;
+  hex: string | null;
+  rgb: string | null;
+  hsl: string | null;
+  float_value: number | null;
+  string_value: string | null;
+  boolean_value: number | null;
+  is_alias: number;
+  alias_variable_id: string | null;
+  updated_at: string;
 }
 
 export interface VariableSearchResult {
@@ -107,6 +147,11 @@ export interface VariableSearchResult {
   collection_id: string;
   resolved_type: string;
   daisyui_name: string | null;
+  tailwind_name: string | null;
+  tailwind_shade: string | null;
+  color_system: string | null;
+  semantic_role: string | null;
+  token_type: string | null;
   hex: string | null;
   relevance: number;
 }
@@ -216,19 +261,40 @@ class CacheManager {
 
   /**
    * Run SQL migrations
+   * Runs all migration files in order (001_initial.sql, 002_enhanced_variables.sql, etc.)
    */
   private runMigrations(): void {
     if (!this.db) throw new Error('Database not initialized');
 
-    const migrationFile = path.join(this.migrationsPath, '001_initial.sql');
-
-    if (fs.existsSync(migrationFile)) {
-      const sql = fs.readFileSync(migrationFile, 'utf-8');
-      this.db.exec(sql);
-      logger.info('Migrations applied successfully');
-    } else {
-      logger.warn(`Migration file not found: ${migrationFile}`);
+    // Get all migration files and sort them
+    if (!fs.existsSync(this.migrationsPath)) {
+      logger.warn(`Migrations directory not found: ${this.migrationsPath}`);
+      return;
     }
+
+    const migrationFiles = fs.readdirSync(this.migrationsPath)
+      .filter(f => f.endsWith('.sql'))
+      .sort(); // Sorts alphabetically: 001_*, 002_*, etc.
+
+    if (migrationFiles.length === 0) {
+      logger.warn('No migration files found');
+      return;
+    }
+
+    // Run each migration in order
+    for (const file of migrationFiles) {
+      const migrationFile = path.join(this.migrationsPath, file);
+      try {
+        const sql = fs.readFileSync(migrationFile, 'utf-8');
+        this.db.exec(sql);
+        logger.info(`Migration applied: ${file}`);
+      } catch (error) {
+        // Log but don't fail - migrations use CREATE IF NOT EXISTS
+        logger.debug(`Migration ${file}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+
+    logger.info(`Migrations complete: ${migrationFiles.length} files processed`);
   }
 
   /**
@@ -696,7 +762,7 @@ class CacheManager {
   // ============================================================
 
   /**
-   * Upsert a variable
+   * Upsert a variable (v2 with enhanced fields)
    */
   upsertVariable(variable: Omit<IndexedVariable, 'last_synced'>): void {
     const db = this.getDb();
@@ -704,11 +770,17 @@ class CacheManager {
       INSERT INTO variables (
         id, name, collection_id, resolved_type,
         daisyui_name, daisyui_category, values_by_mode,
-        hex, rgb, description, scopes
+        hex, rgb, description, scopes,
+        tailwind_name, tailwind_shade, color_system, semantic_role,
+        token_type, css_variable, tailwind_class, hsl,
+        is_alias, alias_target_id, usage_count
       ) VALUES (
         $id, $name, $collection_id, $resolved_type,
         $daisyui_name, $daisyui_category, $values_by_mode,
-        $hex, $rgb, $description, $scopes
+        $hex, $rgb, $description, $scopes,
+        $tailwind_name, $tailwind_shade, $color_system, $semantic_role,
+        $token_type, $css_variable, $tailwind_class, $hsl,
+        $is_alias, $alias_target_id, $usage_count
       )
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
@@ -721,6 +793,17 @@ class CacheManager {
         rgb = excluded.rgb,
         description = excluded.description,
         scopes = excluded.scopes,
+        tailwind_name = excluded.tailwind_name,
+        tailwind_shade = excluded.tailwind_shade,
+        color_system = excluded.color_system,
+        semantic_role = excluded.semantic_role,
+        token_type = excluded.token_type,
+        css_variable = excluded.css_variable,
+        tailwind_class = excluded.tailwind_class,
+        hsl = excluded.hsl,
+        is_alias = excluded.is_alias,
+        alias_target_id = excluded.alias_target_id,
+        usage_count = COALESCE(excluded.usage_count, variables.usage_count),
         last_synced = CURRENT_TIMESTAMP
     `).run({
       $id: variable.id,
@@ -734,6 +817,17 @@ class CacheManager {
       $rgb: variable.rgb,
       $description: variable.description,
       $scopes: variable.scopes,
+      $tailwind_name: variable.tailwind_name || null,
+      $tailwind_shade: variable.tailwind_shade || null,
+      $color_system: variable.color_system || null,
+      $semantic_role: variable.semantic_role || null,
+      $token_type: variable.token_type || null,
+      $css_variable: variable.css_variable || null,
+      $tailwind_class: variable.tailwind_class || null,
+      $hsl: variable.hsl || null,
+      $is_alias: variable.is_alias || 0,
+      $alias_target_id: variable.alias_target_id || null,
+      $usage_count: variable.usage_count || 0,
     });
   }
 
@@ -835,11 +929,14 @@ class CacheManager {
   }
 
   /**
-   * Search variables by name or DaisyUI mapping
+   * Search variables by name, DaisyUI mapping, or Tailwind name
    */
   searchVariables(query: string, options?: {
     type?: string;
     collectionId?: string;
+    colorSystem?: string;
+    tokenType?: string;
+    semanticRole?: string;
     limit?: number;
   }): VariableSearchResult[] {
     const db = this.getDb();
@@ -855,6 +952,11 @@ class CacheManager {
         v.collection_id,
         v.resolved_type,
         v.daisyui_name,
+        v.tailwind_name,
+        v.tailwind_shade,
+        v.color_system,
+        v.semantic_role,
+        v.token_type,
         v.hex,
         bm25(variables_fts) as relevance
       FROM variables_fts
@@ -874,6 +976,21 @@ class CacheManager {
       params.push(options.collectionId);
     }
 
+    if (options?.colorSystem) {
+      sql += ' AND v.color_system = ?';
+      params.push(options.colorSystem);
+    }
+
+    if (options?.tokenType) {
+      sql += ' AND v.token_type = ?';
+      params.push(options.tokenType);
+    }
+
+    if (options?.semanticRole) {
+      sql += ' AND v.semantic_role = ?';
+      params.push(options.semanticRole);
+    }
+
     sql += ' ORDER BY relevance LIMIT ?';
     params.push(limit);
 
@@ -886,6 +1003,269 @@ class CacheManager {
   getAllVariables(): IndexedVariable[] {
     const db = this.getDb();
     return db.prepare('SELECT * FROM variables ORDER BY name').all() as IndexedVariable[];
+  }
+
+  /**
+   * Get variables by color system (daisyui, tailwind, custom, brand)
+   */
+  getVariablesByColorSystem(colorSystem: string): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables WHERE color_system = ? ORDER BY name
+    `).all(colorSystem) as IndexedVariable[];
+  }
+
+  /**
+   * Get variables by semantic role
+   */
+  getVariablesBySemanticRole(semanticRole: string): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables WHERE semantic_role = ? ORDER BY name
+    `).all(semanticRole) as IndexedVariable[];
+  }
+
+  /**
+   * Get variables by token type
+   */
+  getVariablesByTokenType(tokenType: string): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables WHERE token_type = ? ORDER BY name
+    `).all(tokenType) as IndexedVariable[];
+  }
+
+  /**
+   * Get variable by Tailwind name and shade (e.g., 'blue', '500')
+   */
+  getVariableByTailwind(name: string, shade?: string): IndexedVariable | undefined {
+    const db = this.getDb();
+    if (shade) {
+      return db.prepare(`
+        SELECT * FROM variables WHERE tailwind_name = ? AND tailwind_shade = ?
+      `).get(name, shade) as IndexedVariable | undefined;
+    }
+    return db.prepare(`
+      SELECT * FROM variables WHERE tailwind_name = ?
+    `).get(name) as IndexedVariable | undefined;
+  }
+
+  /**
+   * Get all Tailwind color variables grouped by color name
+   */
+  getTailwindColorVariables(): Record<string, IndexedVariable[]> {
+    const db = this.getDb();
+    const variables = db.prepare(`
+      SELECT * FROM variables
+      WHERE color_system = 'tailwind' AND resolved_type = 'COLOR'
+      ORDER BY tailwind_name, CAST(tailwind_shade AS INTEGER)
+    `).all() as IndexedVariable[];
+
+    const grouped: Record<string, IndexedVariable[]> = {};
+    for (const v of variables) {
+      const key = v.tailwind_name || 'other';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(v);
+    }
+    return grouped;
+  }
+
+  /**
+   * Get spacing/sizing variables
+   */
+  getSpacingVariables(): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables
+      WHERE token_type IN ('spacing', 'sizing')
+      ORDER BY name
+    `).all() as IndexedVariable[];
+  }
+
+  // ============================================================
+  // VARIABLE BINDING OPERATIONS
+  // ============================================================
+
+  /**
+   * Record a variable binding to a node
+   */
+  upsertVariableBinding(binding: Omit<VariableBinding, 'id' | 'bound_at' | 'last_verified'>): void {
+    const db = this.getDb();
+    db.prepare(`
+      INSERT INTO variable_bindings (node_id, variable_id, property, property_index, field)
+      VALUES ($node_id, $variable_id, $property, $property_index, $field)
+      ON CONFLICT(node_id, property, property_index, field) DO UPDATE SET
+        variable_id = excluded.variable_id,
+        last_verified = CURRENT_TIMESTAMP
+    `).run({
+      $node_id: binding.node_id,
+      $variable_id: binding.variable_id,
+      $property: binding.property,
+      $property_index: binding.property_index,
+      $field: binding.field,
+    });
+
+    // Update usage count on the variable
+    db.prepare(`
+      UPDATE variables SET usage_count = (
+        SELECT COUNT(*) FROM variable_bindings WHERE variable_id = ?
+      ) WHERE id = ?
+    `).run(binding.variable_id, binding.variable_id);
+  }
+
+  /**
+   * Get all bindings for a node
+   */
+  getBindingsForNode(nodeId: string): VariableBinding[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variable_bindings WHERE node_id = ? ORDER BY property, property_index
+    `).all(nodeId) as VariableBinding[];
+  }
+
+  /**
+   * Get all nodes using a variable
+   */
+  getNodesUsingVariable(variableId: string): string[] {
+    const db = this.getDb();
+    const rows = db.prepare(`
+      SELECT DISTINCT node_id FROM variable_bindings WHERE variable_id = ?
+    `).all(variableId) as { node_id: string }[];
+    return rows.map(r => r.node_id);
+  }
+
+  /**
+   * Remove a variable binding
+   */
+  removeVariableBinding(nodeId: string, property: string, propertyIndex: number = 0): void {
+    const db = this.getDb();
+    db.prepare(`
+      DELETE FROM variable_bindings
+      WHERE node_id = ? AND property = ? AND property_index = ?
+    `).run(nodeId, property, propertyIndex);
+  }
+
+  /**
+   * Clear all bindings for a node
+   */
+  clearNodeBindings(nodeId: string): void {
+    const db = this.getDb();
+    db.prepare(`DELETE FROM variable_bindings WHERE node_id = ?`).run(nodeId);
+  }
+
+  // ============================================================
+  // VARIABLE MODE VALUES
+  // ============================================================
+
+  /**
+   * Upsert a variable value for a specific mode
+   */
+  upsertVariableModeValue(value: Omit<VariableModeValue, 'id' | 'updated_at'>): void {
+    const db = this.getDb();
+    db.prepare(`
+      INSERT INTO variable_mode_values (
+        variable_id, mode_id, mode_name, raw_value,
+        hex, rgb, hsl, float_value, string_value, boolean_value,
+        is_alias, alias_variable_id
+      ) VALUES (
+        $variable_id, $mode_id, $mode_name, $raw_value,
+        $hex, $rgb, $hsl, $float_value, $string_value, $boolean_value,
+        $is_alias, $alias_variable_id
+      )
+      ON CONFLICT(variable_id, mode_id) DO UPDATE SET
+        mode_name = excluded.mode_name,
+        raw_value = excluded.raw_value,
+        hex = excluded.hex,
+        rgb = excluded.rgb,
+        hsl = excluded.hsl,
+        float_value = excluded.float_value,
+        string_value = excluded.string_value,
+        boolean_value = excluded.boolean_value,
+        is_alias = excluded.is_alias,
+        alias_variable_id = excluded.alias_variable_id,
+        updated_at = CURRENT_TIMESTAMP
+    `).run({
+      $variable_id: value.variable_id,
+      $mode_id: value.mode_id,
+      $mode_name: value.mode_name,
+      $raw_value: value.raw_value,
+      $hex: value.hex,
+      $rgb: value.rgb,
+      $hsl: value.hsl,
+      $float_value: value.float_value,
+      $string_value: value.string_value,
+      $boolean_value: value.boolean_value,
+      $is_alias: value.is_alias,
+      $alias_variable_id: value.alias_variable_id,
+    });
+  }
+
+  /**
+   * Get all mode values for a variable
+   */
+  getVariableModeValues(variableId: string): VariableModeValue[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variable_mode_values WHERE variable_id = ? ORDER BY mode_name
+    `).all(variableId) as VariableModeValue[];
+  }
+
+  /**
+   * Get variable value for a specific mode
+   */
+  getVariableValueForMode(variableId: string, modeId: string): VariableModeValue | undefined {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variable_mode_values WHERE variable_id = ? AND mode_id = ?
+    `).get(variableId, modeId) as VariableModeValue | undefined;
+  }
+
+  // ============================================================
+  // ENHANCED STATISTICS
+  // ============================================================
+
+  /**
+   * Get detailed variable statistics
+   */
+  getVariableStats(): {
+    total: number;
+    by_type: Record<string, number>;
+    by_color_system: Record<string, number>;
+    by_token_type: Record<string, number>;
+    by_semantic_role: Record<string, number>;
+    bindings_count: number;
+  } {
+    const db = this.getDb();
+
+    const total = (db.prepare('SELECT COUNT(*) as count FROM variables').get() as { count: number }).count;
+
+    const byTypeRows = db.prepare(`
+      SELECT resolved_type, COUNT(*) as count FROM variables GROUP BY resolved_type
+    `).all() as { resolved_type: string; count: number }[];
+    const by_type: Record<string, number> = {};
+    byTypeRows.forEach(r => by_type[r.resolved_type || 'unknown'] = r.count);
+
+    const byColorSystemRows = db.prepare(`
+      SELECT color_system, COUNT(*) as count FROM variables WHERE color_system IS NOT NULL GROUP BY color_system
+    `).all() as { color_system: string; count: number }[];
+    const by_color_system: Record<string, number> = {};
+    byColorSystemRows.forEach(r => by_color_system[r.color_system] = r.count);
+
+    const byTokenTypeRows = db.prepare(`
+      SELECT token_type, COUNT(*) as count FROM variables WHERE token_type IS NOT NULL GROUP BY token_type
+    `).all() as { token_type: string; count: number }[];
+    const by_token_type: Record<string, number> = {};
+    byTokenTypeRows.forEach(r => by_token_type[r.token_type] = r.count);
+
+    const byRoleRows = db.prepare(`
+      SELECT semantic_role, COUNT(*) as count FROM variables WHERE semantic_role IS NOT NULL GROUP BY semantic_role
+    `).all() as { semantic_role: string; count: number }[];
+    const by_semantic_role: Record<string, number> = {};
+    byRoleRows.forEach(r => by_semantic_role[r.semantic_role] = r.count);
+
+    const bindings_count = (db.prepare('SELECT COUNT(*) as count FROM variable_bindings').get() as { count: number }).count;
+
+    return { total, by_type, by_color_system, by_token_type, by_semantic_role, bindings_count };
   }
 
   // ============================================================
@@ -953,6 +1333,9 @@ class CacheManager {
       DELETE FROM components;
       DELETE FROM pages;
       DELETE FROM design_tokens;
+      DELETE FROM variable_bindings;
+      DELETE FROM variable_mode_values;
+      DELETE FROM variable_aliases;
       DELETE FROM variables;
       DELETE FROM variable_collections;
     `);

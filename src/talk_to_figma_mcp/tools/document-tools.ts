@@ -8,34 +8,13 @@ import { filterFigmaNode } from "../utils/figma-helpers.js";
  * @param server - The MCP server instance
  */
 export function registerDocumentTools(server: McpServer): void {
-  // Document Info Tool
-  server.tool(
-    "get_document_info",
-    "Get detailed information about the current Figma document",
-    {},
-    async () => {
-      try {
-        const result = await sendCommandToFigma("get_document_info");
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result)
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error getting document info: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-        };
-      }
-    }
-  );
+  // DEPRECATED: get_document_info - REMOVED
+  // This tool returned the entire document tree causing huge token responses.
+  // Use instead:
+  //   - list_pages() - Get all pages with summaries
+  //   - get_page_tree(page, max_depth=3) - Structured page exploration
+  //   - search(query, limit=10) - FTS5 search for components
+  //   - get_node_info(nodeId) - Get specific node details
 
   // Selection Tool
   server.tool(

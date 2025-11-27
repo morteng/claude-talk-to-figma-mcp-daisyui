@@ -112,12 +112,10 @@ This fork adds powerful features for DaisyUI + Tailwind + HTMX workflows:
 |------|-------------|
 | `export_for_comparison` | Export frames for visual regression testing |
 
-### Variable & Style Binding Tools (NEW v0.9.0)
+### Variable & Style Binding Tools
 
 | Tool | Description |
 |------|-------------|
-| `get_local_variables` | Get all local variables (design tokens) organized by collection |
-| `get_variable_collections` | Get variable collections with modes (e.g., light/dark theme) |
 | `get_bound_variables` | Inspect which variables are bound to a node's properties |
 | `set_fill_variable` | Bind a color variable to a node's fill (theme-compatible) |
 | `set_stroke_variable` | Bind a color variable to a node's stroke |
@@ -126,6 +124,8 @@ This fork adds powerful features for DaisyUI + Tailwind + HTMX workflows:
 | `set_text_style_id` | Apply a text style to a text node |
 | `resolve_variable_by_name` | Find a variable ID by name (e.g., 'base-100', 'primary') |
 | `clear_variable_binding` | Remove a variable binding from a node property |
+
+> **Note**: `get_local_variables` and `get_variable_collections` were REMOVED in v1.1.0 due to excessive response sizes (~25k tokens). Use cached alternatives below.
 
 ### Variable Cache & Search Tools (NEW v0.9.0)
 
@@ -392,10 +392,22 @@ bun run test:integration # Integration testing
 
 ## Version History
 
-### 0.9.0 (DaisyUI Edition - Variable Binding & Caching)
+### 1.1.0 (Context Optimization)
+- **REMOVED**: `get_local_variables`, `get_variable_collections`, `get_document_info` - These returned massive responses (~25k tokens) that filled context quickly
+- **Use Instead**: Cached alternatives like `get_cached_variable_by_daisyui()`, `search_cached_variables()`, `list_pages()`, `get_page_tree()`
+- **Why**: Context window preservation, faster responses, better agent behavior
+
+### 1.0.0 (DaisyUI + Tailwind Edition)
+- **Complete Tailwind CSS Color Palette**: Full support for all 22 color families with all shades
+- **Enhanced Variable Classification**: Color systems, token types, semantic roles
+- **Multi-Mode Theme Support**: Store and query variable values across light/dark modes
+- **Variable Binding Tracking**: Track which variables are bound to which nodes
+- **Spacing & Sizing Tokens**: Support for non-color design tokens
+
+### 0.9.0 (Variable Binding & Caching)
 - **Variable Binding**: Bind Figma variables (design tokens) to node fills and strokes
 - **Theme-Compatible Colors**: Use `set_fill_variable` instead of hardcoded RGB for light/dark theme support
-- **Variable Discovery**: `get_local_variables`, `get_variable_collections`, `resolve_variable_by_name`
+- **Variable Discovery**: `resolve_variable_by_name` for finding variables by name
 - **Style Binding**: `set_fill_style_id`, `set_stroke_style_id`, `set_text_style_id`
 - **Variable Inspection**: `get_bound_variables` to see what's bound to a node
 - **Clear Bindings**: `clear_variable_binding` to remove variable connections

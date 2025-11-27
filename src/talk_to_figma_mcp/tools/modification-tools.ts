@@ -410,63 +410,17 @@ export function registerModificationTools(server: McpServer): void {
   // FIGMA VARIABLES & STYLE BINDING TOOLS
   // ==========================================================================
 
-  // Get Local Variables Tool
-  server.tool(
-    "get_local_variables",
-    "Get all local variables (design tokens) from the Figma document. Returns color, number, string, and boolean variables organized by collection.",
-    {},
-    async () => {
-      try {
-        const result = await sendCommandToFigma("get_local_variables", {});
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2)
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error getting local variables: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ]
-        };
-      }
-    }
-  );
+  // DEPRECATED: get_local_variables - REMOVED
+  // This tool returned ALL variables (300+) causing ~25k token responses.
+  // Use instead:
+  //   - get_cached_variable_by_daisyui(daisyui_name="primary") - Returns ONE variable
+  //   - search_cached_variables(query="base", limit=10) - Filtered search
+  //   - list_cached_color_variables() - With filtering by collection
 
-  // Get Variable Collections Tool
-  server.tool(
-    "get_variable_collections",
-    "Get all variable collections from the Figma document. Collections organize variables and define modes (e.g., light/dark theme).",
-    {},
-    async () => {
-      try {
-        const result = await sendCommandToFigma("get_variable_collections", {});
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2)
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error getting variable collections: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ]
-        };
-      }
-    }
-  );
+  // DEPRECATED: get_variable_collections - REMOVED
+  // Use instead:
+  //   - list_cached_variable_collections() - From local SQLite cache
+  //   - index_status() - Quick cache health check
 
   // Get Bound Variables Tool
   server.tool(

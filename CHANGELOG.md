@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-11-27 (Context Optimization)
+
+### Removed
+- **`get_local_variables`**: REMOVED - Returned ALL 300+ variables causing ~25k token responses that filled context quickly.
+- **`get_variable_collections`**: REMOVED - Large responses, use cached version instead.
+- **`get_document_info`**: REMOVED - Returned entire document tree causing huge token responses.
+
+### Use These Instead
+These tools return focused, small responses:
+
+| Removed Tool | Replacement | Why Better |
+|--------------|-------------|------------|
+| `get_local_variables` | `get_cached_variable_by_daisyui("primary")` | Returns ONE variable (~100 tokens vs 25k) |
+| `get_local_variables` | `search_cached_variables(query, limit=10)` | Filtered search with limits |
+| `get_variable_collections` | `list_cached_variable_collections()` | From local SQLite cache |
+| `get_document_info` | `list_pages()` | Get all pages with summaries |
+| `get_document_info` | `get_page_tree(page, max_depth=3)` | Structured page exploration |
+| `get_document_info` | `search(query, limit=10)` | Targeted component search |
+
+### Why This Matters
+- **Context Window Preservation**: Large MCP responses (25k+ tokens) quickly fill the context window, degrading agent performance.
+- **Faster Responses**: Cached lookups are 100x faster than Figma API calls.
+- **Better Agent Behavior**: Agents can make multiple targeted queries instead of one massive dump.
+
+## [1.0.0] - 2025-11-27 (DaisyUI + Tailwind Edition)
+
+### Added
+- **Complete Tailwind CSS Color Palette**: Full support for all 22 Tailwind color families with all shades (50-950).
+  - Pattern matching for Tailwind variable names (e.g., `blue-500`, `slate_600`, `emerald 400`).
+  - Color hex-to-Tailwind fuzzy matching with configurable threshold.
+  - `list_tailwind_color_variables`: List all Tailwind color variables grouped by color family.
+  - `get_cached_variable_by_tailwind`: Find variable by Tailwind name and shade.
+
+- **Enhanced Variable Classification System**: Smart variable classification for all Figma variable types.
+  - **Color Systems**: Variables auto-classified as `daisyui`, `tailwind`, `custom`, or `brand`.
+  - **Token Types**: `color`, `spacing`, `typography`, `radius`, `shadow`, `opacity`, `sizing`, `boolean`, `string`.
+  - **Semantic Roles**: `background`, `foreground`, `border`, `accent`, `interactive`, `state`, `content`.
+  - `list_variables_by_color_system`: Query variables by color system.
+  - `list_variables_by_token_type`: Query variables by token type.
+  - `list_variables_by_semantic_role`: Query variables by semantic role.
+  - `get_variable_statistics`: Comprehensive stats breakdown.
+
+- **Multi-Mode Theme Support**: Store and query variable values across modes (Light/Dark).
+  - `variable_mode_values` table stores resolved values for each mode.
+  - `get_variable_mode_values`: Get all mode values for a variable.
+  - Support for mode-specific hex, RGB, HSL, float, string, and boolean values.
+  - Variable alias detection and tracking.
+
+- **Variable Binding Tracking**: Track which variables are bound to which nodes.
+  - `variable_bindings` table links nodes to variables with property information.
+  - Property tracking: fills, strokes, width, height, gap, padding, cornerRadius, opacity, effects.
+  - Usage count tracking on variables.
+
+- **Spacing & Sizing Tokens**: Support for non-color design tokens.
+  - Extended Tailwind spacing scale (0-96).
+  - `list_spacing_variables`: List all spacing and sizing variables.
+  - Pattern detection for spacing, gap, padding, margin tokens.
+
+- **Color Conversion Utilities**: New color manipulation functions.
+  - `hexToHsl`: Convert hex to HSL.
+  - `hslToString`: Format HSL as CSS string.
+  - `contrastRatio`: Calculate WCAG contrast ratio.
+  - HSL values stored alongside hex/RGB for better color manipulation.
+
+### Database Schema (Migration 002)
+- New columns in `variables` table:
+  - `tailwind_name`, `tailwind_shade`, `color_system`, `semantic_role`
+  - `token_type`, `css_variable`, `tailwind_class`, `hsl`
+  - `is_alias`, `alias_target_id`, `usage_count`
+- New tables:
+  - `variable_bindings`: Track node-variable relationships
+  - `variable_aliases`: Track variable-to-variable references
+  - `variable_mode_values`: Store values per mode (light/dark)
+  - `tailwind_colors`: Pre-populated Tailwind palette reference
+  - `daisyui_colors`: Pre-populated DaisyUI semantic colors
+  - `token_categories`: Organize tokens by category
+- Updated FTS5 index includes `tailwind_name`, `tailwind_shade`, `color_system`, `semantic_role`, `token_type`
+
+### Why This Matters
+- **Tailwind-First Workflows**: Use Tailwind color naming in Figma variables for direct CSS mapping.
+- **Design Token Parity**: Variables classified to match CSS custom property conventions.
+- **Theme-Aware Queries**: Find all background colors, or all state colors, with semantic role filtering.
+- **Usage Analysis**: Know which variables are actually used and where.
+
 ## [0.9.0] - 2025-11-27 (DaisyUI Edition - Variable Binding)
 
 ### Added

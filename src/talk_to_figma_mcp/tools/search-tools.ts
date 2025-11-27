@@ -14,7 +14,11 @@ import { sendCommandToFigma, isConnected, onChangeNotification, ChangeNotificati
 import { detectDaisyUIComponent, getComponentCategory, COMPONENT_USAGE_HINTS } from "../daisyui/index.js";
 import {
   rgbToHex,
+  hexToHsl,
+  hslToString,
   matchDaisyUIColor,
+  matchTailwindColor,
+  classifyVariable,
   spacingToTailwind,
   fontSizeToTailwind,
   fontWeightToTailwind,
@@ -254,35 +258,11 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
         const variables = variablesByCollection[collectionName] || [];
 
         for (const variable of variables) {
-          // Try to detect DaisyUI name from variable name
-          const variableName = variable.name?.toLowerCase() || '';
-          let daisyuiName: string | null = null;
-          let daisyuiCategory: string | null = null;
-
-          // Common DaisyUI color variable patterns
-          const daisyuiPatterns = [
-            'primary', 'secondary', 'accent', 'neutral',
-            'base-100', 'base-200', 'base-300', 'base-content',
-            'info', 'success', 'warning', 'error',
-            'primary-content', 'secondary-content', 'accent-content',
-            'info-content', 'success-content', 'warning-content', 'error-content',
-            'neutral-content'
-          ];
-
-          for (const pattern of daisyuiPatterns) {
-            if (variableName.includes(pattern.replace('-', '')) || variableName.includes(pattern)) {
-              daisyuiName = pattern;
-              daisyuiCategory = pattern.includes('content') ? 'content' :
-                               pattern.startsWith('base') ? 'base' :
-                               ['info', 'success', 'warning', 'error'].includes(pattern) ? 'state' :
-                               pattern;
-              break;
-            }
-          }
-
-          // Convert RGB to hex if available
+          // Convert RGB to hex if available (for color variables)
           let hex: string | null = null;
           let rgb: string | null = null;
+          let hsl: string | null = null;
+
           if (variable.resolvedType === 'COLOR' && variable.valuesByMode) {
             const firstModeValue = Object.values(variable.valuesByMode)[0] as any;
             if (firstModeValue && typeof firstModeValue === 'object' && 'r' in firstModeValue) {
@@ -291,6 +271,23 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
               const b = Math.round((firstModeValue.b || 0) * 255);
               hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
               rgb = `rgb(${r}, ${g}, ${b})`;
+              // Convert to HSL
+              const hslValue = hexToHsl(hex);
+              hsl = hslToString(hslValue);
+            }
+          }
+
+          // Use the comprehensive classifyVariable function
+          const classification = classifyVariable(variable.name, variable.resolvedType || 'STRING', hex || undefined);
+
+          // Check if this is an alias (references another variable)
+          let isAlias = 0;
+          let aliasTargetId: string | null = null;
+          if (variable.valuesByMode) {
+            const firstModeValue = Object.values(variable.valuesByMode)[0] as any;
+            if (firstModeValue && typeof firstModeValue === 'object' && firstModeValue.type === 'VARIABLE_ALIAS') {
+              isAlias = 1;
+              aliasTargetId = firstModeValue.id || null;
             }
           }
 
@@ -299,15 +296,85 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
             name: variable.name,
             collection_id: variable.collectionId || '',
             resolved_type: variable.resolvedType || 'STRING',
-            daisyui_name: daisyuiName,
-            daisyui_category: daisyuiCategory,
+            daisyui_name: classification.daisyuiName || null,
+            daisyui_category: classification.daisyuiCategory || null,
             values_by_mode: variable.valuesByMode ? JSON.stringify(variable.valuesByMode) : null,
             hex,
             rgb,
+            hsl,
             description: variable.description || null,
             scopes: variable.scopes ? JSON.stringify(variable.scopes) : null,
+            // New enhanced fields
+            tailwind_name: classification.tailwindName || null,
+            tailwind_shade: classification.tailwindShade || null,
+            color_system: classification.colorSystem || null,
+            semantic_role: classification.semanticRole || null,
+            token_type: classification.tokenType || null,
+            css_variable: classification.cssVariable || null,
+            tailwind_class: classification.tailwindClass || null,
+            is_alias: isAlias,
+            alias_target_id: aliasTargetId,
+            usage_count: 0,
           });
           totalVariables++;
+
+          // Also store per-mode values for multi-theme support
+          if (variable.valuesByMode) {
+            // Get mode names from collection
+            const collection = collections.find((c: any) => c.id === variable.collectionId);
+            const modes = collection?.modes || [];
+
+            for (const [modeId, modeValue] of Object.entries(variable.valuesByMode)) {
+              const mode = modes.find((m: any) => m.modeId === modeId);
+              const modeName = mode?.name || modeId;
+
+              let modeHex: string | null = null;
+              let modeRgb: string | null = null;
+              let modeHsl: string | null = null;
+              let floatValue: number | null = null;
+              let stringValue: string | null = null;
+              let booleanValue: number | null = null;
+              let isModeAlias = 0;
+              let aliasModeVarId: string | null = null;
+
+              const mv = modeValue as any;
+
+              // Check if this mode value is an alias
+              if (mv && typeof mv === 'object' && mv.type === 'VARIABLE_ALIAS') {
+                isModeAlias = 1;
+                aliasModeVarId = mv.id || null;
+              } else if (variable.resolvedType === 'COLOR' && mv && typeof mv === 'object' && 'r' in mv) {
+                const r = Math.round((mv.r || 0) * 255);
+                const g = Math.round((mv.g || 0) * 255);
+                const b = Math.round((mv.b || 0) * 255);
+                modeHex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+                modeRgb = `rgb(${r}, ${g}, ${b})`;
+                const hslVal = hexToHsl(modeHex);
+                modeHsl = hslToString(hslVal);
+              } else if (variable.resolvedType === 'FLOAT' && typeof mv === 'number') {
+                floatValue = mv;
+              } else if (variable.resolvedType === 'STRING' && typeof mv === 'string') {
+                stringValue = mv;
+              } else if (variable.resolvedType === 'BOOLEAN' && typeof mv === 'boolean') {
+                booleanValue = mv ? 1 : 0;
+              }
+
+              cache.upsertVariableModeValue({
+                variable_id: variable.id,
+                mode_id: modeId,
+                mode_name: modeName,
+                raw_value: JSON.stringify(modeValue),
+                hex: modeHex,
+                rgb: modeRgb,
+                hsl: modeHsl,
+                float_value: floatValue,
+                string_value: stringValue,
+                boolean_value: booleanValue,
+                is_alias: isModeAlias,
+                alias_variable_id: aliasModeVarId,
+              });
+            }
+          }
         }
       }
     } catch (varError) {
@@ -1119,6 +1186,486 @@ export function registerSearchTools(server: McpServer): void {
               hex: variable.hex,
               rgb: variable.rgb,
               bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${variable.id}")`
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  // ============================================================
+  // ENHANCED VARIABLE TOOLS (V2)
+  // ============================================================
+
+  /**
+   * List Tailwind color variables
+   */
+  server.tool(
+    "list_tailwind_color_variables",
+    "List all Tailwind CSS color variables from the local cache. Groups by color name (slate, blue, etc.) with shades.",
+    {
+      color_name: z.string().optional().describe("Filter by Tailwind color name (e.g., 'blue', 'slate', 'emerald')")
+    },
+    async ({ color_name }) => {
+      try {
+        cache.initialize();
+
+        const groupedVariables = cache.getTailwindColorVariables();
+
+        // Filter if color name specified
+        let result: Record<string, any[]> = {};
+        if (color_name) {
+          const colorLower = color_name.toLowerCase();
+          if (groupedVariables[colorLower]) {
+            result[colorLower] = groupedVariables[colorLower].map(v => ({
+              id: v.id,
+              name: v.name,
+              shade: v.tailwind_shade,
+              hex: v.hex,
+              tailwind_class: v.tailwind_class,
+              bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${v.id}")`
+            }));
+          }
+        } else {
+          for (const [colorName, vars] of Object.entries(groupedVariables)) {
+            result[colorName] = vars.map(v => ({
+              id: v.id,
+              name: v.name,
+              shade: v.tailwind_shade,
+              hex: v.hex,
+              tailwind_class: v.tailwind_class,
+              bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${v.id}")`
+            }));
+          }
+        }
+
+        const totalCount = Object.values(result).reduce((sum, arr) => sum + arr.length, 0);
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              total_count: totalCount,
+              color_families: Object.keys(result).length,
+              by_color: result
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error listing Tailwind colors: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * List variables by color system
+   */
+  server.tool(
+    "list_variables_by_color_system",
+    "List all variables organized by color system (daisyui, tailwind, custom, brand).",
+    {
+      system: z.enum(["daisyui", "tailwind", "custom", "brand"]).optional().describe("Filter by color system")
+    },
+    async ({ system }) => {
+      try {
+        cache.initialize();
+
+        if (system) {
+          const variables = cache.getVariablesByColorSystem(system);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                color_system: system,
+                count: variables.length,
+                variables: variables.map(v => ({
+                  id: v.id,
+                  name: v.name,
+                  daisyui_name: v.daisyui_name,
+                  tailwind_name: v.tailwind_name,
+                  tailwind_shade: v.tailwind_shade,
+                  hex: v.hex,
+                  semantic_role: v.semantic_role,
+                  bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${v.id}")`
+                }))
+              }, null, 2)
+            }]
+          };
+        }
+
+        // Get all systems
+        const systems = ['daisyui', 'tailwind', 'custom', 'brand'];
+        const result: Record<string, any> = {};
+
+        for (const sys of systems) {
+          const vars = cache.getVariablesByColorSystem(sys);
+          if (vars.length > 0) {
+            result[sys] = {
+              count: vars.length,
+              variables: vars.slice(0, 10).map(v => ({
+                id: v.id,
+                name: v.name,
+                hex: v.hex
+              })),
+              has_more: vars.length > 10
+            };
+          }
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              summary: result
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * List variables by token type
+   */
+  server.tool(
+    "list_variables_by_token_type",
+    "List all variables organized by token type (color, spacing, typography, radius, shadow, opacity, boolean, string).",
+    {
+      token_type: z.enum(["color", "spacing", "typography", "radius", "shadow", "opacity", "sizing", "boolean", "string"]).optional().describe("Filter by token type")
+    },
+    async ({ token_type }) => {
+      try {
+        cache.initialize();
+
+        if (token_type) {
+          const variables = cache.getVariablesByTokenType(token_type);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                token_type,
+                count: variables.length,
+                variables: variables.map(v => ({
+                  id: v.id,
+                  name: v.name,
+                  resolved_type: v.resolved_type,
+                  hex: v.hex,
+                  color_system: v.color_system,
+                  semantic_role: v.semantic_role,
+                  tailwind_class: v.tailwind_class
+                }))
+              }, null, 2)
+            }]
+          };
+        }
+
+        // Get summary by all token types
+        const stats = cache.getVariableStats();
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              total_variables: stats.total,
+              by_token_type: stats.by_token_type,
+              by_resolved_type: stats.by_type
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * List variables by semantic role
+   */
+  server.tool(
+    "list_variables_by_semantic_role",
+    "List all variables organized by semantic role (background, foreground, border, accent, interactive, state, content).",
+    {
+      role: z.enum(["background", "foreground", "border", "accent", "interactive", "state", "content"]).optional().describe("Filter by semantic role")
+    },
+    async ({ role }) => {
+      try {
+        cache.initialize();
+
+        if (role) {
+          const variables = cache.getVariablesBySemanticRole(role);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                semantic_role: role,
+                count: variables.length,
+                variables: variables.map(v => ({
+                  id: v.id,
+                  name: v.name,
+                  hex: v.hex,
+                  color_system: v.color_system,
+                  daisyui_name: v.daisyui_name,
+                  tailwind_class: v.tailwind_class,
+                  bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${v.id}")`
+                }))
+              }, null, 2)
+            }]
+          };
+        }
+
+        // Get summary by all roles
+        const stats = cache.getVariableStats();
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              total_variables: stats.total,
+              by_semantic_role: stats.by_semantic_role
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * Get variable by Tailwind name
+   */
+  server.tool(
+    "get_cached_variable_by_tailwind",
+    "Find a cached variable by its Tailwind color name and shade (e.g., 'blue', '500'). Fast direct lookup.",
+    {
+      color_name: z.string().describe("Tailwind color name (e.g., 'blue', 'slate', 'emerald')"),
+      shade: z.string().optional().describe("Tailwind shade (e.g., '50', '100', '500', '900')")
+    },
+    async ({ color_name, shade }) => {
+      try {
+        cache.initialize();
+
+        const variable = cache.getVariableByTailwind(color_name.toLowerCase(), shade);
+
+        if (!variable) {
+          // Try fuzzy search
+          const searchQuery = shade ? `${color_name} ${shade}` : color_name;
+          const results = cache.searchVariables(searchQuery, { colorSystem: 'tailwind', limit: 5 });
+
+          if (results.length > 0) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  found: false,
+                  exact_match: false,
+                  suggestions: results.map(r => ({
+                    id: r.id,
+                    name: r.name,
+                    tailwind_name: r.tailwind_name,
+                    tailwind_shade: r.tailwind_shade,
+                    hex: r.hex
+                  }))
+                }, null, 2)
+              }]
+            };
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                found: false,
+                message: `No variable found for Tailwind ${color_name}${shade ? '-' + shade : ''}`,
+                suggestion: "Try building the index with build_index, or search with search_cached_variables"
+              }, null, 2)
+            }]
+          };
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              found: true,
+              id: variable.id,
+              name: variable.name,
+              tailwind_name: variable.tailwind_name,
+              tailwind_shade: variable.tailwind_shade,
+              tailwind_class: variable.tailwind_class,
+              hex: variable.hex,
+              hsl: variable.hsl,
+              bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${variable.id}")`
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * Get detailed variable statistics
+   */
+  server.tool(
+    "get_variable_statistics",
+    "Get detailed statistics about all cached variables including counts by type, color system, token type, and semantic role.",
+    {},
+    async () => {
+      try {
+        cache.initialize();
+        const stats = cache.getVariableStats();
+        const generalStats = cache.getStats();
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              document_name: cache.getMeta('document_name'),
+              total_variables: stats.total,
+              total_bindings: stats.bindings_count,
+              by_figma_type: stats.by_type,
+              by_color_system: stats.by_color_system,
+              by_token_type: stats.by_token_type,
+              by_semantic_role: stats.by_semantic_role,
+              collections: generalStats.collection_count,
+              last_synced: generalStats.last_synced
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * Get spacing/sizing variables
+   */
+  server.tool(
+    "list_spacing_variables",
+    "List all spacing and sizing variables (gaps, padding, margins, widths, heights).",
+    {},
+    async () => {
+      try {
+        cache.initialize();
+        const variables = cache.getSpacingVariables();
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              count: variables.length,
+              variables: variables.map(v => ({
+                id: v.id,
+                name: v.name,
+                token_type: v.token_type,
+                resolved_type: v.resolved_type,
+                tailwind_class: v.tailwind_class
+              }))
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * Get variable values by mode (light/dark theme support)
+   */
+  server.tool(
+    "get_variable_mode_values",
+    "Get all mode values for a variable (e.g., light mode vs dark mode values). Useful for theme-aware design.",
+    {
+      variable_id: z.string().describe("The Figma variable ID")
+    },
+    async ({ variable_id }) => {
+      try {
+        cache.initialize();
+        const modeValues = cache.getVariableModeValues(variable_id);
+        const variable = cache.getVariable(variable_id);
+
+        if (!variable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                found: false,
+                message: `Variable not found: ${variable_id}`
+              }, null, 2)
+            }]
+          };
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              variable: {
+                id: variable.id,
+                name: variable.name,
+                resolved_type: variable.resolved_type,
+                color_system: variable.color_system
+              },
+              modes: modeValues.map(mv => ({
+                mode_id: mv.mode_id,
+                mode_name: mv.mode_name,
+                hex: mv.hex,
+                rgb: mv.rgb,
+                hsl: mv.hsl,
+                float_value: mv.float_value,
+                string_value: mv.string_value,
+                boolean_value: mv.boolean_value,
+                is_alias: mv.is_alias === 1,
+                alias_variable_id: mv.alias_variable_id
+              }))
             }, null, 2)
           }]
         };
