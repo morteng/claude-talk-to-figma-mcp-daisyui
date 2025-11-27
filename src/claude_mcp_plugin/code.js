@@ -86,10 +86,11 @@ figma.on("run", ({ command }) => {
 // ============================================================================
 
 // Helper to send throttled change notifications
-function sendChangeNotification(changeType, details = {}) {
+function sendChangeNotification(changeType, details) {
+  if (details === undefined) details = {};
   if (!state.changeNotificationsEnabled) return;
 
-  const now = Date.now();
+  var now = Date.now();
   if (now - state.lastChangeNotification < state.changeNotificationThrottleMs) {
     return; // Throttle
   }
@@ -106,39 +107,48 @@ function sendChangeNotification(changeType, details = {}) {
   });
 }
 
-// Listen for document changes (node property changes, additions, deletions)
-figma.on('documentchange', (event) => {
-  if (!state.changeNotificationsEnabled) return;
+// Initialize document change listener after loading all pages
+// This is required for incremental loading mode in Figma
+(function initDocumentChangeListener() {
+  figma.loadAllPagesAsync().then(function() {
+    figma.on('documentchange', function(event) {
+      if (!state.changeNotificationsEnabled) return;
 
-  const changes = event.documentChanges;
-  const summary = {
-    propertyChanges: 0,
-    nodeCreations: 0,
-    nodeDeletions: 0,
-    affectedNodeIds: []
-  };
+      var changes = event.documentChanges;
+      var summary = {
+        propertyChanges: 0,
+        nodeCreations: 0,
+        nodeDeletions: 0,
+        affectedNodeIds: []
+      };
 
-  for (const change of changes) {
-    if (change.type === 'PROPERTY_CHANGE') {
-      summary.propertyChanges++;
-      if (change.node && !summary.affectedNodeIds.includes(change.node.id)) {
-        summary.affectedNodeIds.push(change.node.id);
+      for (var i = 0; i < changes.length; i++) {
+        var change = changes[i];
+        if (change.type === 'PROPERTY_CHANGE') {
+          summary.propertyChanges++;
+          if (change.node && summary.affectedNodeIds.indexOf(change.node.id) === -1) {
+            summary.affectedNodeIds.push(change.node.id);
+          }
+        } else if (change.type === 'CREATE') {
+          summary.nodeCreations++;
+          if (change.node && summary.affectedNodeIds.indexOf(change.node.id) === -1) {
+            summary.affectedNodeIds.push(change.node.id);
+          }
+        } else if (change.type === 'DELETE') {
+          summary.nodeDeletions++;
+        }
       }
-    } else if (change.type === 'CREATE') {
-      summary.nodeCreations++;
-      if (change.node && !summary.affectedNodeIds.includes(change.node.id)) {
-        summary.affectedNodeIds.push(change.node.id);
-      }
-    } else if (change.type === 'DELETE') {
-      summary.nodeDeletions++;
-    }
-  }
 
-  // Only notify if there are meaningful changes
-  if (summary.propertyChanges > 0 || summary.nodeCreations > 0 || summary.nodeDeletions > 0) {
-    sendChangeNotification('document_change', summary);
-  }
-});
+      // Only notify if there are meaningful changes
+      if (summary.propertyChanges > 0 || summary.nodeCreations > 0 || summary.nodeDeletions > 0) {
+        sendChangeNotification('document_change', summary);
+      }
+    });
+    console.log('Document change listener initialized');
+  }).catch(function(err) {
+    console.error('Failed to load all pages for document change listener:', err);
+  });
+})();
 
 // Listen for selection changes
 figma.on('selectionchange', () => {
@@ -3810,8 +3820,8 @@ async function getPrototypeLinks(params) {
             sourceName: n.name,
             destinationId: reaction.action.destinationId,
             destinationName: dest ? dest.name : 'Unknown',
-            trigger: reaction.trigger?.type || 'UNKNOWN',
-            transition: reaction.action.transition?.type || 'INSTANT',
+            trigger: (reaction.trigger && reaction.trigger.type) || 'UNKNOWN',
+            transition: (reaction.action.transition && reaction.action.transition.type) || 'INSTANT',
           });
         }
       }
@@ -3857,19 +3867,19 @@ async function removePrototypeLink(params) {
     throw new Error(`Node does not support prototype interactions: ${nodeId}`);
   }
 
-  const originalCount = node.reactions?.length || 0;
+  const originalCount = (node.reactions && node.reactions.length) || 0;
 
   if (removeAll) {
     node.reactions = [];
   } else if (destinationId) {
     node.reactions = (node.reactions || []).filter(
-      r => !(r.action?.type === 'NODE' && r.action?.destinationId === destinationId)
+      function(r) { return !((r.action && r.action.type) === 'NODE' && (r.action && r.action.destinationId) === destinationId); }
     );
   } else {
     throw new Error("Must specify destinationId or set removeAll=true");
   }
 
-  const newCount = node.reactions?.length || 0;
+  const newCount = (node.reactions && node.reactions.length) || 0;
 
   return {
     success: true,

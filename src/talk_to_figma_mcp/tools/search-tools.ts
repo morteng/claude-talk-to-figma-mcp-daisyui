@@ -94,6 +94,18 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
       const pageResult = await sendCommandToFigma("get_node_info", { nodeId: page.id });
       const pageData = pageResult as any;
 
+      // Insert page FIRST to satisfy foreign key constraint
+      // (we'll update the counts later)
+      cache.upsertPage({
+        id: page.id,
+        name: page.name,
+        node_count: 0,
+        component_count: 0,
+        frame_count: 0,
+        summary: `Page: ${page.name}`,
+        main_sections: JSON.stringify([])
+      });
+
       // Index nodes recursively
       const indexNode = (node: any, parentPath: string = '', depth: number = 0) => {
         const nodePath = parentPath ? `${parentPath}/${node.name}` : node.name;

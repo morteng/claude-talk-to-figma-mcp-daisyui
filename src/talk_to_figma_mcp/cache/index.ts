@@ -2,10 +2,10 @@
  * SQLite Cache Manager for Figma Index
  *
  * Provides fast local queries without Figma round-trips.
- * Uses better-sqlite3 for synchronous, high-performance SQLite access.
+ * Uses bun:sqlite for native Bun compatibility.
  */
 
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../utils/logger.js';
@@ -78,15 +78,23 @@ export interface SearchResult {
 }
 
 class CacheManager {
-  private db: Database.Database | null = null;
+  private db: Database | null = null;
   private dbPath: string;
   private migrationsPath: string;
 
   constructor() {
+    // Get the directory where this module is located (works with Bun ESM)
+    // This ensures migrations are found relative to the package, not cwd
+    // Structure: dist/talk_to_figma_mcp/server.js -> import.meta.dir = dist/talk_to_figma_mcp
+    // So we go up 2 levels to reach the package root
+    const moduleDir = import.meta.dir;
+    const packageRoot = path.resolve(moduleDir, '../..');
+
     // Default paths - can be overridden via environment
-    const cacheDir = process.env.FIGMA_CACHE_DIR || path.join(process.cwd(), 'cache');
+    const cacheDir = process.env.FIGMA_CACHE_DIR || path.join(packageRoot, 'cache');
     this.dbPath = process.env.FIGMA_INDEX_PATH || path.join(cacheDir, 'figma-index.db');
-    this.migrationsPath = path.join(__dirname, '../../../migrations');
+    // Migrations are in the package root
+    this.migrationsPath = path.join(packageRoot, 'migrations');
   }
 
   /**
@@ -103,8 +111,8 @@ class CacheManager {
 
     // Open database
     this.db = new Database(this.dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
+    this.db.exec('PRAGMA journal_mode = WAL');
+    this.db.exec('PRAGMA foreign_keys = ON');
 
     // Run migrations
     this.runMigrations();
@@ -132,7 +140,7 @@ class CacheManager {
   /**
    * Get database instance (initialize if needed)
    */
-  getDb(): Database.Database {
+  getDb(): Database {
     if (!this.db) {
       this.initialize();
     }
@@ -166,11 +174,11 @@ class CacheManager {
         tailwind_classes, data_testid,
         x, y, width, height, content_hash
       ) VALUES (
-        @figma_id, @name, @type, @parent_id, @page_id, @path, @depth,
-        @component_key, @component_name,
-        @daisyui_class, @daisyui_component, @daisyui_variant, @daisyui_size,
-        @tailwind_classes, @data_testid,
-        @x, @y, @width, @height, @content_hash
+        $figma_id, $name, $type, $parent_id, $page_id, $path, $depth,
+        $component_key, $component_name,
+        $daisyui_class, $daisyui_component, $daisyui_variant, $daisyui_size,
+        $tailwind_classes, $data_testid,
+        $x, $y, $width, $height, $content_hash
       )
       ON CONFLICT(figma_id) DO UPDATE SET
         name = excluded.name,
@@ -195,7 +203,28 @@ class CacheManager {
         last_synced = CURRENT_TIMESTAMP
     `);
 
-    stmt.run(node);
+    stmt.run({
+      $figma_id: node.figma_id,
+      $name: node.name,
+      $type: node.type,
+      $parent_id: node.parent_id,
+      $page_id: node.page_id,
+      $path: node.path,
+      $depth: node.depth,
+      $component_key: node.component_key,
+      $component_name: node.component_name,
+      $daisyui_class: node.daisyui_class,
+      $daisyui_component: node.daisyui_component,
+      $daisyui_variant: node.daisyui_variant,
+      $daisyui_size: node.daisyui_size,
+      $tailwind_classes: node.tailwind_classes,
+      $data_testid: node.data_testid,
+      $x: node.x,
+      $y: node.y,
+      $width: node.width,
+      $height: node.height,
+      $content_hash: node.content_hash,
+    });
   }
 
   /**
@@ -212,11 +241,11 @@ class CacheManager {
         tailwind_classes, data_testid,
         x, y, width, height, content_hash
       ) VALUES (
-        @figma_id, @name, @type, @parent_id, @page_id, @path, @depth,
-        @component_key, @component_name,
-        @daisyui_class, @daisyui_component, @daisyui_variant, @daisyui_size,
-        @tailwind_classes, @data_testid,
-        @x, @y, @width, @height, @content_hash
+        $figma_id, $name, $type, $parent_id, $page_id, $path, $depth,
+        $component_key, $component_name,
+        $daisyui_class, $daisyui_component, $daisyui_variant, $daisyui_size,
+        $tailwind_classes, $data_testid,
+        $x, $y, $width, $height, $content_hash
       )
       ON CONFLICT(figma_id) DO UPDATE SET
         name = excluded.name,
@@ -241,14 +270,36 @@ class CacheManager {
         last_synced = CURRENT_TIMESTAMP
     `);
 
-    const insertMany = db.transaction((nodes) => {
+    // Use bun:sqlite's transaction API
+    const insertMany = db.transaction(() => {
       for (const node of nodes) {
-        stmt.run(node);
+        stmt.run({
+          $figma_id: node.figma_id,
+          $name: node.name,
+          $type: node.type,
+          $parent_id: node.parent_id,
+          $page_id: node.page_id,
+          $path: node.path,
+          $depth: node.depth,
+          $component_key: node.component_key,
+          $component_name: node.component_name,
+          $daisyui_class: node.daisyui_class,
+          $daisyui_component: node.daisyui_component,
+          $daisyui_variant: node.daisyui_variant,
+          $daisyui_size: node.daisyui_size,
+          $tailwind_classes: node.tailwind_classes,
+          $data_testid: node.data_testid,
+          $x: node.x,
+          $y: node.y,
+          $width: node.width,
+          $height: node.height,
+          $content_hash: node.content_hash,
+        });
       }
       return nodes.length;
     });
 
-    return insertMany(nodes);
+    return insertMany();
   }
 
   /**
@@ -395,7 +446,7 @@ class CacheManager {
     const db = this.getDb();
     db.prepare(`
       INSERT INTO pages (id, name, node_count, component_count, frame_count, summary, main_sections)
-      VALUES (@id, @name, @node_count, @component_count, @frame_count, @summary, @main_sections)
+      VALUES ($id, $name, $node_count, $component_count, $frame_count, $summary, $main_sections)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         node_count = excluded.node_count,
@@ -404,7 +455,15 @@ class CacheManager {
         summary = excluded.summary,
         main_sections = excluded.main_sections,
         last_synced = CURRENT_TIMESTAMP
-    `).run(page);
+    `).run({
+      $id: page.id,
+      $name: page.name,
+      $node_count: page.node_count,
+      $component_count: page.component_count,
+      $frame_count: page.frame_count,
+      $summary: page.summary,
+      $main_sections: page.main_sections,
+    });
   }
 
   /**
@@ -438,9 +497,9 @@ class CacheManager {
         daisyui_class, tailwind_base, variants, default_variant,
         description, usage_hint, example_contexts, clone_ready
       ) VALUES (
-        @key, @name, @category, @subcategory, @figma_id,
-        @daisyui_class, @tailwind_base, @variants, @default_variant,
-        @description, @usage_hint, @example_contexts, @clone_ready
+        $key, $name, $category, $subcategory, $figma_id,
+        $daisyui_class, $tailwind_base, $variants, $default_variant,
+        $description, $usage_hint, $example_contexts, $clone_ready
       )
       ON CONFLICT(key) DO UPDATE SET
         name = excluded.name,
@@ -456,7 +515,21 @@ class CacheManager {
         example_contexts = excluded.example_contexts,
         clone_ready = excluded.clone_ready,
         last_synced = CURRENT_TIMESTAMP
-    `).run(component);
+    `).run({
+      $key: component.key,
+      $name: component.name,
+      $category: component.category,
+      $subcategory: component.subcategory,
+      $figma_id: component.figma_id,
+      $daisyui_class: component.daisyui_class,
+      $tailwind_base: component.tailwind_base,
+      $variants: component.variants,
+      $default_variant: component.default_variant,
+      $description: component.description,
+      $usage_hint: component.usage_hint,
+      $example_contexts: component.example_contexts,
+      $clone_ready: component.clone_ready ? 1 : 0,
+    });
   }
 
   /**
