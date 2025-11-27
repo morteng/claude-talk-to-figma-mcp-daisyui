@@ -11,12 +11,12 @@ A Model Context Protocol (MCP) plugin that allows Claude Desktop and other AI to
 
 ## Project Context
 
-This fork was developed for the **Ampæra Energy Platform** project, a Norwegian smart home energy management system. While customized for our specific workflow (HTMX + DaisyUI + Tailwind + Playwright), the tools are general-purpose and work with any Figma project.
+This fork was developed for a project that needed enhanced Figma-to-code workflow capabilities. While customized for a specific workflow (HTMX + DaisyUI + Tailwind + Playwright), the tools are general-purpose and work with any Figma project.
 
-**Customizations specific to Ampæra:**
-- Component registry format matches our `docs/ui/component-registry/*.yaml` structure
-- Page Object generation follows our Playwright test conventions
-- Design token extraction optimized for our Tailwind config
+**Customizations in this fork:**
+- Component registry format uses `docs/ui/component-registry/*.yaml` structure
+- Page Object generation follows Playwright test conventions
+- Design token extraction optimized for Tailwind config
 
 All tools work standalone and can be adapted to other project structures.
 
@@ -367,8 +367,8 @@ See [CHANGELOG.md](CHANGELOG.md) for upstream history.
 **License**: MIT
 
 **This Fork**:
-- DaisyUI Edition enhancements for the Ampæra Energy Platform
-- Additional tools for comprehensive Figma-to-Code pipeline
+- DaisyUI Edition enhancements for comprehensive Figma-to-Code pipeline
+- Additional tools for design token extraction, accessibility auditing, and code generation
 
 **Upstream**:
 - [arinspunk/claude-talk-to-figma-mcp](https://github.com/arinspunk/claude-talk-to-figma-mcp) - Claude adaptation by Xúlio Zé
