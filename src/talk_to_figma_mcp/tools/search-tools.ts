@@ -62,24 +62,32 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
   success: boolean;
   nodesIndexed: number;
   componentsFound: number;
+  variablesIndexed: number;
+  collectionsIndexed: number;
   pagesSynced: string[];
   error?: string;
 }> {
   if (!isConnected()) {
-    return { success: false, nodesIndexed: 0, componentsFound: 0, pagesSynced: [], error: "Not connected to Figma" };
+    return { success: false, nodesIndexed: 0, componentsFound: 0, variablesIndexed: 0, collectionsIndexed: 0, pagesSynced: [], error: "Not connected to Figma" };
   }
 
   try {
+    // Get document info from Figma FIRST to get the document ID
+    const docInfo = await sendCommandToFigma("get_document_info");
+    const docId = (docInfo as any).id || (docInfo as any).key;
+    const docPages = (docInfo as any).pages || [];
+
+    // Set the document ID to use the correct database file
+    if (docId) {
+      cache.setDocumentId(docId);
+    }
+
     cache.initialize();
 
     if (options.forceRebuild) {
       cache.clearAll();
       logger.info("Index cleared for rebuild");
     }
-
-    // Get document info from Figma
-    const docInfo = await sendCommandToFigma("get_document_info");
-    const docPages = (docInfo as any).pages || [];
 
     // Filter pages if specified
     const targetPages = options.pages
@@ -218,6 +226,95 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
       });
     }
 
+    // Sync variables and collections
+    let totalVariables = 0;
+    let totalCollections = 0;
+
+    try {
+      // Get variable collections
+      const collectionsResult = await sendCommandToFigma("get_variable_collections");
+      const collections = (collectionsResult as any).collections || [];
+
+      for (const collection of collections) {
+        cache.upsertVariableCollection({
+          id: collection.id,
+          name: collection.name,
+          modes: JSON.stringify(collection.modes || []),
+          default_mode_id: collection.defaultModeId || null,
+          variable_count: collection.variableIds?.length || 0,
+        });
+        totalCollections++;
+      }
+
+      // Get all local variables
+      const variablesResult = await sendCommandToFigma("get_local_variables");
+      const variablesByCollection = (variablesResult as any).variables || {};
+
+      for (const collectionName in variablesByCollection) {
+        const variables = variablesByCollection[collectionName] || [];
+
+        for (const variable of variables) {
+          // Try to detect DaisyUI name from variable name
+          const variableName = variable.name?.toLowerCase() || '';
+          let daisyuiName: string | null = null;
+          let daisyuiCategory: string | null = null;
+
+          // Common DaisyUI color variable patterns
+          const daisyuiPatterns = [
+            'primary', 'secondary', 'accent', 'neutral',
+            'base-100', 'base-200', 'base-300', 'base-content',
+            'info', 'success', 'warning', 'error',
+            'primary-content', 'secondary-content', 'accent-content',
+            'info-content', 'success-content', 'warning-content', 'error-content',
+            'neutral-content'
+          ];
+
+          for (const pattern of daisyuiPatterns) {
+            if (variableName.includes(pattern.replace('-', '')) || variableName.includes(pattern)) {
+              daisyuiName = pattern;
+              daisyuiCategory = pattern.includes('content') ? 'content' :
+                               pattern.startsWith('base') ? 'base' :
+                               ['info', 'success', 'warning', 'error'].includes(pattern) ? 'state' :
+                               pattern;
+              break;
+            }
+          }
+
+          // Convert RGB to hex if available
+          let hex: string | null = null;
+          let rgb: string | null = null;
+          if (variable.resolvedType === 'COLOR' && variable.valuesByMode) {
+            const firstModeValue = Object.values(variable.valuesByMode)[0] as any;
+            if (firstModeValue && typeof firstModeValue === 'object' && 'r' in firstModeValue) {
+              const r = Math.round((firstModeValue.r || 0) * 255);
+              const g = Math.round((firstModeValue.g || 0) * 255);
+              const b = Math.round((firstModeValue.b || 0) * 255);
+              hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+              rgb = `rgb(${r}, ${g}, ${b})`;
+            }
+          }
+
+          cache.upsertVariable({
+            id: variable.id,
+            name: variable.name,
+            collection_id: variable.collectionId || '',
+            resolved_type: variable.resolvedType || 'STRING',
+            daisyui_name: daisyuiName,
+            daisyui_category: daisyuiCategory,
+            values_by_mode: variable.valuesByMode ? JSON.stringify(variable.valuesByMode) : null,
+            hex,
+            rgb,
+            description: variable.description || null,
+            scopes: variable.scopes ? JSON.stringify(variable.scopes) : null,
+          });
+          totalVariables++;
+        }
+      }
+    } catch (varError) {
+      // Variable sync is optional - log error but don't fail the whole sync
+      logger.warn(`Failed to sync variables: ${varError instanceof Error ? varError.message : String(varError)}`);
+    }
+
     // Update sync metadata
     cache.setMeta('last_full_sync', new Date().toISOString());
     cache.setMeta('document_name', (docInfo as any).name || 'Unknown');
@@ -227,6 +324,8 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
       success: true,
       nodesIndexed: totalNodes,
       componentsFound: totalComponents,
+      variablesIndexed: totalVariables,
+      collectionsIndexed: totalCollections,
       pagesSynced: targetPages.map((p: any) => p.name)
     };
   } catch (error) {
@@ -234,6 +333,8 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
       success: false,
       nodesIndexed: 0,
       componentsFound: 0,
+      variablesIndexed: 0,
+      collectionsIndexed: 0,
       pagesSynced: [],
       error: error instanceof Error ? error.message : String(error)
     };
@@ -247,6 +348,20 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
 async function ensureIndex(): Promise<{ ready: boolean; autoBuilt: boolean; message?: string }> {
   if (syncInProgress) {
     return { ready: false, autoBuilt: false, message: "Sync already in progress" };
+  }
+
+  // If connected, get document ID and switch to correct database
+  if (isConnected()) {
+    try {
+      const docInfo = await sendCommandToFigma("get_document_info");
+      const docId = (docInfo as any).id || (docInfo as any).key;
+      if (docId) {
+        cache.setDocumentId(docId);
+      }
+    } catch (error) {
+      // Continue with current database if we can't get document info
+      logger.warn(`Could not get document ID: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   cache.initialize();
@@ -291,8 +406,8 @@ async function ensureIndex(): Promise<{ ready: boolean; autoBuilt: boolean; mess
       cache.setMeta('index_invalidated', 'false');
       cache.setMeta('invalidation_reason', '');
 
-      logger.info(`Index built: ${result.nodesIndexed} nodes, ${result.componentsFound} components`);
-      return { ready: true, autoBuilt: true, message: `Auto-indexed ${result.nodesIndexed} nodes (${syncReason})` };
+      logger.info(`Index built: ${result.nodesIndexed} nodes, ${result.componentsFound} components, ${result.variablesIndexed} variables`);
+      return { ready: true, autoBuilt: true, message: `Auto-indexed ${result.nodesIndexed} nodes, ${result.variablesIndexed} variables (${syncReason})` };
     } else {
       return { ready: hasNodes, autoBuilt: false, message: result.error };
     }
@@ -334,6 +449,8 @@ export function registerSearchTools(server: McpServer): void {
               success: true,
               nodes_indexed: result.nodesIndexed,
               components_found: result.componentsFound,
+              variables_indexed: result.variablesIndexed,
+              collections_indexed: result.collectionsIndexed,
               pages_synced: result.pagesSynced,
               stats
             }, null, 2)
@@ -359,9 +476,23 @@ export function registerSearchTools(server: McpServer): void {
     {},
     async () => {
       try {
+        // If connected, switch to correct database for current document
+        if (isConnected()) {
+          try {
+            const docInfo = await sendCommandToFigma("get_document_info");
+            const docId = (docInfo as any).id || (docInfo as any).key;
+            if (docId) {
+              cache.setDocumentId(docId);
+            }
+          } catch (error) {
+            // Continue with current database
+          }
+        }
+
         cache.initialize();
         const stats = cache.getStats();
         const documentName = cache.getMeta('document_name');
+        const documentId = cache.getDocumentId();
         const schemaVersion = cache.getMeta('schema_version');
 
         return {
@@ -369,6 +500,7 @@ export function registerSearchTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({
               document_name: documentName || 'Not synced',
+              document_id: documentId || 'Not set',
               schema_version: schemaVersion,
               ...stats,
               is_ready: stats.node_count > 0
@@ -380,6 +512,44 @@ export function registerSearchTools(server: McpServer): void {
           content: [{
             type: "text",
             text: `Error getting index status: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * List all cached documents
+   */
+  server.tool(
+    "list_cached_documents",
+    "List all Figma documents that have been indexed and cached locally. Each document has its own SQLite database.",
+    {},
+    async () => {
+      try {
+        const documents = cache.listCachedDocuments();
+
+        const formatted = documents.map(doc => ({
+          document_id: doc.documentId,
+          size_kb: Math.round(doc.size / 1024),
+          last_modified: doc.lastModified.toISOString()
+        }));
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              cached_documents: formatted.length,
+              current_document: cache.getDocumentId() || 'None',
+              documents: formatted
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error listing cached documents: ${error instanceof Error ? error.message : String(error)}`
           }]
         };
       }
@@ -701,6 +871,254 @@ export function registerSearchTools(server: McpServer): void {
               page: targetPage.name,
               page_id: targetPage.id,
               tree
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  // ============================================================
+  // VARIABLE SEARCH (from local cache)
+  // ============================================================
+
+  /**
+   * Search cached variables
+   */
+  server.tool(
+    "search_cached_variables",
+    "Search locally cached Figma variables by name or DaisyUI mapping. Fast lookup without Figma round-trip. Use build_index first to populate the cache.",
+    {
+      query: z.string().describe("Search query (e.g., 'primary', 'base-100', 'neutral')"),
+      type: z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]).optional().describe("Filter by variable type"),
+      limit: z.number().optional().default(20).describe("Maximum results (default: 20)")
+    },
+    async ({ query, type, limit }) => {
+      try {
+        cache.initialize();
+
+        const results = cache.searchVariables(query, {
+          type,
+          limit
+        });
+
+        const formatted = results.map(v => ({
+          id: v.id,
+          name: v.name,
+          type: v.resolved_type,
+          daisyui_name: v.daisyui_name,
+          hex: v.hex,
+          bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${v.id}")`
+        }));
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              query,
+              results_count: formatted.length,
+              results: formatted
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error searching variables: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * List all cached color variables
+   */
+  server.tool(
+    "list_cached_color_variables",
+    "List all color variables from the local cache. Organized by DaisyUI semantic names. Use build_index first to populate the cache.",
+    {
+      collection: z.string().optional().describe("Filter by collection name")
+    },
+    async ({ collection }) => {
+      try {
+        cache.initialize();
+
+        let variables = cache.getColorVariables();
+
+        // Filter by collection if specified
+        if (collection) {
+          const collections = cache.getVariableCollections();
+          const targetCollection = collections.find(c =>
+            c.name.toLowerCase().includes(collection.toLowerCase())
+          );
+          if (targetCollection) {
+            variables = variables.filter(v => v.collection_id === targetCollection.id);
+          }
+        }
+
+        // Group by DaisyUI category
+        const grouped: Record<string, any[]> = {
+          primary: [],
+          secondary: [],
+          accent: [],
+          neutral: [],
+          base: [],
+          state: [],
+          content: [],
+          other: []
+        };
+
+        for (const v of variables) {
+          const category = v.daisyui_category || 'other';
+          const targetGroup = grouped[category] || grouped.other;
+          targetGroup.push({
+            id: v.id,
+            name: v.name,
+            daisyui_name: v.daisyui_name,
+            hex: v.hex,
+            bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${v.id}")`
+          });
+        }
+
+        // Remove empty groups
+        for (const key in grouped) {
+          if (grouped[key].length === 0) {
+            delete grouped[key];
+          }
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              total_count: variables.length,
+              by_category: grouped
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error listing color variables: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * List variable collections
+   */
+  server.tool(
+    "list_cached_variable_collections",
+    "List all variable collections from the local cache. Shows collection names, modes (e.g., light/dark), and variable counts.",
+    {},
+    async () => {
+      try {
+        cache.initialize();
+
+        const collections = cache.getVariableCollections();
+
+        const formatted = collections.map(c => ({
+          id: c.id,
+          name: c.name,
+          modes: c.modes ? JSON.parse(c.modes) : [],
+          default_mode_id: c.default_mode_id,
+          variable_count: c.variable_count
+        }));
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              collection_count: formatted.length,
+              collections: formatted
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error listing variable collections: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  /**
+   * Get variable by DaisyUI name
+   */
+  server.tool(
+    "get_cached_variable_by_daisyui",
+    "Find a cached variable by its DaisyUI semantic name (e.g., 'primary', 'base-100', 'neutral'). Fast direct lookup.",
+    {
+      daisyui_name: z.string().describe("DaisyUI semantic name (e.g., 'primary', 'base-100', 'neutral-content')")
+    },
+    async ({ daisyui_name }) => {
+      try {
+        cache.initialize();
+
+        const variable = cache.getVariableByDaisyUIName(daisyui_name);
+
+        if (!variable) {
+          // Try fuzzy search
+          const results = cache.searchVariables(daisyui_name, { type: 'COLOR', limit: 5 });
+
+          if (results.length > 0) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  found: false,
+                  exact_match: false,
+                  suggestions: results.map(r => ({
+                    id: r.id,
+                    name: r.name,
+                    daisyui_name: r.daisyui_name,
+                    hex: r.hex
+                  }))
+                }, null, 2)
+              }]
+            };
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                found: false,
+                message: `No variable found with DaisyUI name: ${daisyui_name}`,
+                suggestion: "Try building the index with build_index, or search with search_cached_variables"
+              }, null, 2)
+            }]
+          };
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              found: true,
+              id: variable.id,
+              name: variable.name,
+              daisyui_name: variable.daisyui_name,
+              daisyui_category: variable.daisyui_category,
+              resolved_type: variable.resolved_type,
+              hex: variable.hex,
+              rgb: variable.rgb,
+              bind_command: `mcp__figma__set_fill_variable(nodeId="<node_id>", variableId="${variable.id}")`
             }, null, 2)
           }]
         };

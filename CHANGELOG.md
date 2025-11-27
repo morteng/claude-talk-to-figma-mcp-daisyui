@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2025-11-27 (DaisyUI Edition - Variable Binding)
+
+### Added
+- **Variable Binding Tools**: Complete support for Figma variables (design tokens).
+  - `get_local_variables`: Get all local variables organized by collection.
+  - `get_variable_collections`: Get variable collections with modes (light/dark theme).
+  - `get_bound_variables`: Inspect which variables are bound to a node's properties.
+  - `set_fill_variable`: Bind a color variable to a node's fill for theme-compatible colors.
+  - `set_stroke_variable`: Bind a color variable to a node's stroke.
+  - `resolve_variable_by_name`: Find a variable ID by its semantic name (e.g., 'base-100', 'primary').
+  - `clear_variable_binding`: Remove a variable binding from a node property.
+
+- **Style Binding Tools**: Apply predefined styles to nodes.
+  - `set_fill_style_id`: Apply a fill style to a node.
+  - `set_stroke_style_id`: Apply a stroke style to a node.
+  - `set_text_style_id`: Apply a text style to a text node.
+
+- **Variable Caching & Search**: Variables are now stored in the local SQLite index for fast access.
+  - `search_cached_variables`: Search locally cached variables by name or DaisyUI mapping.
+  - `list_cached_color_variables`: List all color variables grouped by DaisyUI category.
+  - `list_cached_variable_collections`: List variable collections with modes and variable counts.
+  - `get_cached_variable_by_daisyui`: Find a variable by its DaisyUI semantic name.
+  - Auto-sync: Variables are automatically fetched and cached during `build_index`.
+  - FTS5 search: Full-text search across variable names and DaisyUI mappings.
+
+- **Per-Document Database Caching**: Each Figma document now gets its own SQLite database file.
+  - Switching between Figma files automatically uses the correct cached data.
+  - `list_cached_documents`: List all Figma documents that have been indexed locally.
+  - Database files named `figma-index-{document_id}.db` in the cache directory.
+  - No more data overwrites when working with multiple Figma files.
+
+### Why This Matters
+- **Theme Compatibility**: Bound variables automatically switch with Figma modes (light/dark theme).
+- **Design Tokens**: Variables represent DaisyUI semantic colors (base-100, primary, etc.).
+- **No Hardcoding**: Use `set_fill_variable` instead of `set_fill_color` for proper theming.
+- **Fast Lookups**: Cached variables enable instant search without Figma round-trips.
+
+### Technical Details
+- Uses `figma.variables.setBoundVariableForPaint()` API for fill/stroke bindings.
+- Variable resolution supports fuzzy name matching and collection filtering.
+- Style binding supports both local styles and library imports via `importStyleByKeyAsync`.
+- New SQLite tables: `variables` and `variable_collections` with FTS5 search index.
+- DaisyUI auto-detection maps variable names to semantic categories (primary, base, state, etc.).
+
 ## [0.8.0] - 2025-11-27 (DaisyUI Edition - Extended)
 
 ### Added

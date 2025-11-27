@@ -382,9 +382,9 @@ export function registerModificationTools(server: McpServer): void {
           nodeId,
           effectStyleId
         });
-        
+
         const typedResult = result as { name: string, effectStyleId: string };
-        
+
         return {
           content: [
             {
@@ -399,6 +399,354 @@ export function registerModificationTools(server: McpServer): void {
             {
               type: "text",
               text: `Error setting effect style: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // ==========================================================================
+  // FIGMA VARIABLES & STYLE BINDING TOOLS
+  // ==========================================================================
+
+  // Get Local Variables Tool
+  server.tool(
+    "get_local_variables",
+    "Get all local variables (design tokens) from the Figma document. Returns color, number, string, and boolean variables organized by collection.",
+    {},
+    async () => {
+      try {
+        const result = await sendCommandToFigma("get_local_variables", {});
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting local variables: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Get Variable Collections Tool
+  server.tool(
+    "get_variable_collections",
+    "Get all variable collections from the Figma document. Collections organize variables and define modes (e.g., light/dark theme).",
+    {},
+    async () => {
+      try {
+        const result = await sendCommandToFigma("get_variable_collections", {});
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting variable collections: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Get Bound Variables Tool
+  server.tool(
+    "get_bound_variables",
+    "Get all variable bindings for a node. Shows which variables are bound to fills, strokes, and other properties.",
+    {
+      nodeId: z.string().describe("The ID of the node to inspect")
+    },
+    async ({ nodeId }) => {
+      try {
+        const result = await sendCommandToFigma("get_bound_variables", { nodeId });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting bound variables: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Set Fill Variable Tool
+  server.tool(
+    "set_fill_variable",
+    "Bind a color variable to a node's fill. Use this for theme-compatible colors instead of hardcoded RGB values.",
+    {
+      nodeId: z.string().describe("The ID of the node to modify"),
+      variableId: z.string().describe("The ID of the color variable to bind"),
+      fillIndex: z.number().optional().describe("Index of the fill to modify (default: 0)")
+    },
+    async ({ nodeId, variableId, fillIndex }) => {
+      try {
+        const result = await sendCommandToFigma("set_fill_variable", {
+          nodeId,
+          variableId,
+          fillIndex: fillIndex ?? 0
+        });
+        const typedResult = result as { name: string; variableName: string };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully bound variable "${typedResult.variableName}" to fill of node "${typedResult.name}"`
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error setting fill variable: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Set Stroke Variable Tool
+  server.tool(
+    "set_stroke_variable",
+    "Bind a color variable to a node's stroke. Use this for theme-compatible border colors.",
+    {
+      nodeId: z.string().describe("The ID of the node to modify"),
+      variableId: z.string().describe("The ID of the color variable to bind"),
+      strokeIndex: z.number().optional().describe("Index of the stroke to modify (default: 0)")
+    },
+    async ({ nodeId, variableId, strokeIndex }) => {
+      try {
+        const result = await sendCommandToFigma("set_stroke_variable", {
+          nodeId,
+          variableId,
+          strokeIndex: strokeIndex ?? 0
+        });
+        const typedResult = result as { name: string; variableName: string };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully bound variable "${typedResult.variableName}" to stroke of node "${typedResult.name}"`
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error setting stroke variable: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Set Fill Style ID Tool
+  server.tool(
+    "set_fill_style_id",
+    "Apply a fill style to a node in Figma. Use get_styles to find available fill style IDs.",
+    {
+      nodeId: z.string().describe("The ID of the node to modify"),
+      fillStyleId: z.string().describe("The ID of the fill style to apply")
+    },
+    async ({ nodeId, fillStyleId }) => {
+      try {
+        const result = await sendCommandToFigma("set_fill_style_id", {
+          nodeId,
+          fillStyleId
+        });
+        const typedResult = result as { name: string };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully applied fill style to node "${typedResult.name}"`
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error setting fill style: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Set Stroke Style ID Tool
+  server.tool(
+    "set_stroke_style_id",
+    "Apply a stroke style to a node in Figma. Use get_styles to find available stroke style IDs.",
+    {
+      nodeId: z.string().describe("The ID of the node to modify"),
+      strokeStyleId: z.string().describe("The ID of the stroke style to apply")
+    },
+    async ({ nodeId, strokeStyleId }) => {
+      try {
+        const result = await sendCommandToFigma("set_stroke_style_id", {
+          nodeId,
+          strokeStyleId
+        });
+        const typedResult = result as { name: string };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully applied stroke style to node "${typedResult.name}"`
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error setting stroke style: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Set Text Style ID Tool
+  server.tool(
+    "set_text_style_id",
+    "Apply a text style to a text node in Figma. Use get_styles to find available text style IDs.",
+    {
+      nodeId: z.string().describe("The ID of the text node to modify"),
+      textStyleId: z.string().describe("The ID of the text style to apply")
+    },
+    async ({ nodeId, textStyleId }) => {
+      try {
+        const result = await sendCommandToFigma("set_text_style_id", {
+          nodeId,
+          textStyleId
+        });
+        const typedResult = result as { name: string };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully applied text style to node "${typedResult.name}"`
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error setting text style: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Resolve Variable by Name Tool
+  server.tool(
+    "resolve_variable_by_name",
+    "Find a variable ID by its name. Useful for binding variables when you know the semantic name (e.g., 'base-100', 'primary').",
+    {
+      name: z.string().describe("The name of the variable to find (e.g., 'base-100', 'primary', 'neutral')"),
+      collectionName: z.string().optional().describe("Optional: Filter by collection name")
+    },
+    async ({ name, collectionName }) => {
+      try {
+        const result = await sendCommandToFigma("resolve_variable_by_name", {
+          name,
+          collectionName
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error resolving variable: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // Clear Variable Binding Tool
+  server.tool(
+    "clear_variable_binding",
+    "Remove a variable binding from a node property, reverting to the static value.",
+    {
+      nodeId: z.string().describe("The ID of the node to modify"),
+      field: z.enum(["fills", "strokes", "width", "height", "opacity", "cornerRadius"]).describe("The field to clear the binding from")
+    },
+    async ({ nodeId, field }) => {
+      try {
+        const result = await sendCommandToFigma("clear_variable_binding", {
+          nodeId,
+          field
+        });
+        const typedResult = result as { name: string };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully cleared ${field} variable binding from node "${typedResult.name}"`
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error clearing variable binding: ${error instanceof Error ? error.message : String(error)}`
             }
           ]
         };

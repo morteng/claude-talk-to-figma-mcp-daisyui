@@ -115,6 +115,43 @@ CREATE TABLE IF NOT EXISTS design_tokens (
     last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Variable collections (design token groups with modes like light/dark)
+CREATE TABLE IF NOT EXISTS variable_collections (
+    id TEXT PRIMARY KEY,        -- Figma collection ID
+    name TEXT NOT NULL,
+    modes TEXT,                 -- JSON array of mode objects: [{"id": "...", "name": "Light"}, ...]
+    default_mode_id TEXT,
+    variable_count INTEGER DEFAULT 0,
+    last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Variables (design tokens that can be bound to nodes)
+CREATE TABLE IF NOT EXISTS variables (
+    id TEXT PRIMARY KEY,        -- Figma variable ID
+    name TEXT NOT NULL,
+    collection_id TEXT NOT NULL,
+    resolved_type TEXT NOT NULL, -- COLOR, FLOAT, STRING, BOOLEAN
+
+    -- DaisyUI mapping
+    daisyui_name TEXT,          -- Semantic name: 'primary', 'base-100', 'neutral'
+    daisyui_category TEXT,      -- color, spacing, etc.
+
+    -- Value per mode (JSON object: {"mode_id": value, ...})
+    values_by_mode TEXT,
+
+    -- For COLOR type - resolved values in default mode
+    hex TEXT,
+    rgb TEXT,
+
+    -- Metadata
+    description TEXT,
+    scopes TEXT,                -- JSON array: ["FILL_COLOR", "STROKE_COLOR"]
+
+    last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (collection_id) REFERENCES variable_collections(id)
+);
+
 -- Sync metadata
 CREATE TABLE IF NOT EXISTS sync_meta (
     key TEXT PRIMARY KEY,
@@ -147,6 +184,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS components_fts USING fts5(
     content_rowid=id
 );
 
+-- FTS for variables (search by name, daisyui mapping)
+CREATE VIRTUAL TABLE IF NOT EXISTS variables_fts USING fts5(
+    name,
+    daisyui_name,
+    daisyui_category,
+    description,
+    content=variables
+);
+
 -- ============================================================
 -- Indexes for fast queries
 -- ============================================================
@@ -164,6 +210,11 @@ CREATE INDEX IF NOT EXISTS idx_components_key ON components(key);
 
 CREATE INDEX IF NOT EXISTS idx_tokens_category ON design_tokens(category);
 CREATE INDEX IF NOT EXISTS idx_tokens_daisyui ON design_tokens(daisyui_var);
+
+CREATE INDEX IF NOT EXISTS idx_variables_collection ON variables(collection_id);
+CREATE INDEX IF NOT EXISTS idx_variables_type ON variables(resolved_type);
+CREATE INDEX IF NOT EXISTS idx_variables_daisyui ON variables(daisyui_name);
+CREATE INDEX IF NOT EXISTS idx_variables_name ON variables(name);
 
 -- ============================================================
 -- Triggers to keep FTS in sync
@@ -201,6 +252,24 @@ CREATE TRIGGER IF NOT EXISTS components_au AFTER UPDATE ON components BEGIN
   VALUES ('delete', old.id, old.name, old.category, old.subcategory, old.daisyui_class, old.description, old.usage_hint);
   INSERT INTO components_fts(rowid, name, category, subcategory, daisyui_class, description, usage_hint)
   VALUES (new.id, new.name, new.category, new.subcategory, new.daisyui_class, new.description, new.usage_hint);
+END;
+
+-- Variables FTS triggers
+CREATE TRIGGER IF NOT EXISTS variables_ai AFTER INSERT ON variables BEGIN
+  INSERT INTO variables_fts(rowid, name, daisyui_name, daisyui_category, description)
+  VALUES (new.rowid, new.name, new.daisyui_name, new.daisyui_category, new.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS variables_ad AFTER DELETE ON variables BEGIN
+  INSERT INTO variables_fts(variables_fts, rowid, name, daisyui_name, daisyui_category, description)
+  VALUES ('delete', old.rowid, old.name, old.daisyui_name, old.daisyui_category, old.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS variables_au AFTER UPDATE ON variables BEGIN
+  INSERT INTO variables_fts(variables_fts, rowid, name, daisyui_name, daisyui_category, description)
+  VALUES ('delete', old.rowid, old.name, old.daisyui_name, old.daisyui_category, old.description);
+  INSERT INTO variables_fts(rowid, name, daisyui_name, daisyui_category, description)
+  VALUES (new.rowid, new.name, new.daisyui_name, new.daisyui_category, new.description);
 END;
 
 -- ============================================================

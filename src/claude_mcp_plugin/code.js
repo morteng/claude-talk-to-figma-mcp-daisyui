@@ -304,6 +304,27 @@ async function handleCommand(command, params) {
       return await lockNode(params);
     case "set_opacity":
       return await setOpacity(params);
+    // Variable & Style Binding Commands
+    case "get_local_variables":
+      return await getLocalVariables(params);
+    case "get_variable_collections":
+      return await getVariableCollections(params);
+    case "get_bound_variables":
+      return await getBoundVariables(params);
+    case "set_fill_variable":
+      return await setFillVariable(params);
+    case "set_stroke_variable":
+      return await setStrokeVariable(params);
+    case "set_fill_style_id":
+      return await setFillStyleId(params);
+    case "set_stroke_style_id":
+      return await setStrokeStyleId(params);
+    case "set_text_style_id":
+      return await setTextStyleId(params);
+    case "resolve_variable_by_name":
+      return await resolveVariableByName(params);
+    case "clear_variable_binding":
+      return await clearVariableBinding(params);
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -4057,5 +4078,520 @@ async function setOpacity(params) {
     id: node.id,
     name: node.name,
     opacity: node.opacity,
+  };
+}
+
+// ============================================================================
+// VARIABLE & STYLE BINDING FUNCTIONS
+// ============================================================================
+
+/**
+ * Get all local variables from the document
+ */
+async function getLocalVariables(params) {
+  try {
+    const variables = await figma.variables.getLocalVariablesAsync();
+
+    // Group by collection for easier consumption
+    const byCollection = {};
+
+    for (const variable of variables) {
+      const collectionId = variable.variableCollectionId;
+      if (!byCollection[collectionId]) {
+        byCollection[collectionId] = {
+          collectionId,
+          variables: []
+        };
+      }
+
+      // Get value for each mode
+      const valuesByMode = {};
+      for (const modeId in variable.valuesByMode) {
+        const value = variable.valuesByMode[modeId];
+        // Handle color values specially
+        if (variable.resolvedType === 'COLOR' && typeof value === 'object' && 'r' in value) {
+          valuesByMode[modeId] = {
+            r: value.r,
+            g: value.g,
+            b: value.b,
+            a: value.a !== undefined ? value.a : 1
+          };
+        } else {
+          valuesByMode[modeId] = value;
+        }
+      }
+
+      byCollection[collectionId].variables.push({
+        id: variable.id,
+        name: variable.name,
+        resolvedType: variable.resolvedType,
+        valuesByMode,
+        description: variable.description || '',
+        hiddenFromPublishing: variable.hiddenFromPublishing,
+        scopes: variable.scopes
+      });
+    }
+
+    return {
+      totalVariables: variables.length,
+      collections: Object.values(byCollection)
+    };
+  } catch (error) {
+    throw new Error(`Failed to get local variables: ${error.message}`);
+  }
+}
+
+/**
+ * Get all variable collections from the document
+ */
+async function getVariableCollections(params) {
+  try {
+    const collections = await figma.variables.getLocalVariableCollectionsAsync();
+
+    return {
+      totalCollections: collections.length,
+      collections: collections.map(collection => ({
+        id: collection.id,
+        name: collection.name,
+        modes: collection.modes.map(mode => ({
+          modeId: mode.modeId,
+          name: mode.name
+        })),
+        defaultModeId: collection.defaultModeId,
+        variableIds: collection.variableIds,
+        hiddenFromPublishing: collection.hiddenFromPublishing
+      }))
+    };
+  } catch (error) {
+    throw new Error(`Failed to get variable collections: ${error.message}`);
+  }
+}
+
+/**
+ * Get bound variables for a node
+ */
+async function getBoundVariables(params) {
+  const { nodeId } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  const bindings = {};
+
+  // Check for boundVariables property
+  if ('boundVariables' in node && node.boundVariables) {
+    for (const field in node.boundVariables) {
+      const binding = node.boundVariables[field];
+      if (binding) {
+        // Handle array bindings (like fills)
+        if (Array.isArray(binding)) {
+          bindings[field] = await Promise.all(binding.map(async (b) => {
+            if (b && b.id) {
+              const variable = await figma.variables.getVariableByIdAsync(b.id);
+              return {
+                variableId: b.id,
+                variableName: variable ? variable.name : 'Unknown',
+                type: variable ? variable.resolvedType : 'Unknown'
+              };
+            }
+            return null;
+          }));
+        } else if (binding.id) {
+          const variable = await figma.variables.getVariableByIdAsync(binding.id);
+          bindings[field] = {
+            variableId: binding.id,
+            variableName: variable ? variable.name : 'Unknown',
+            type: variable ? variable.resolvedType : 'Unknown'
+          };
+        }
+      }
+    }
+  }
+
+  return {
+    nodeId: node.id,
+    name: node.name,
+    type: node.type,
+    boundVariables: bindings
+  };
+}
+
+/**
+ * Bind a color variable to a node's fill
+ */
+async function setFillVariable(params) {
+  const { nodeId, variableId, fillIndex = 0 } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+  if (!variableId) {
+    throw new Error("Missing variableId parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  if (!('fills' in node)) {
+    throw new Error(`Node does not support fills: ${nodeId}`);
+  }
+
+  const variable = await figma.variables.getVariableByIdAsync(variableId);
+  if (!variable) {
+    throw new Error(`Variable not found with ID: ${variableId}`);
+  }
+
+  if (variable.resolvedType !== 'COLOR') {
+    throw new Error(`Variable must be of type COLOR, got: ${variable.resolvedType}`);
+  }
+
+  // Clone the fills array
+  const fills = JSON.parse(JSON.stringify(node.fills));
+
+  // Ensure there's a fill at the specified index
+  if (!fills[fillIndex]) {
+    fills[fillIndex] = { type: 'SOLID', color: { r: 0, g: 0, b: 0 } };
+  }
+
+  // Use the Figma API to bind the variable to the paint
+  const newFill = figma.variables.setBoundVariableForPaint(
+    fills[fillIndex],
+    'color',
+    variable
+  );
+
+  fills[fillIndex] = newFill;
+  node.fills = fills;
+
+  return {
+    id: node.id,
+    name: node.name,
+    variableId: variable.id,
+    variableName: variable.name
+  };
+}
+
+/**
+ * Bind a color variable to a node's stroke
+ */
+async function setStrokeVariable(params) {
+  const { nodeId, variableId, strokeIndex = 0 } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+  if (!variableId) {
+    throw new Error("Missing variableId parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  if (!('strokes' in node)) {
+    throw new Error(`Node does not support strokes: ${nodeId}`);
+  }
+
+  const variable = await figma.variables.getVariableByIdAsync(variableId);
+  if (!variable) {
+    throw new Error(`Variable not found with ID: ${variableId}`);
+  }
+
+  if (variable.resolvedType !== 'COLOR') {
+    throw new Error(`Variable must be of type COLOR, got: ${variable.resolvedType}`);
+  }
+
+  // Clone the strokes array
+  const strokes = JSON.parse(JSON.stringify(node.strokes));
+
+  // Ensure there's a stroke at the specified index
+  if (!strokes[strokeIndex]) {
+    strokes[strokeIndex] = { type: 'SOLID', color: { r: 0, g: 0, b: 0 } };
+  }
+
+  // Use the Figma API to bind the variable to the paint
+  const newStroke = figma.variables.setBoundVariableForPaint(
+    strokes[strokeIndex],
+    'color',
+    variable
+  );
+
+  strokes[strokeIndex] = newStroke;
+  node.strokes = strokes;
+
+  return {
+    id: node.id,
+    name: node.name,
+    variableId: variable.id,
+    variableName: variable.name
+  };
+}
+
+/**
+ * Apply a fill style to a node
+ */
+async function setFillStyleId(params) {
+  const { nodeId, fillStyleId } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+  if (!fillStyleId) {
+    throw new Error("Missing fillStyleId parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  if (!('fillStyleId' in node)) {
+    throw new Error(`Node does not support fill styles: ${nodeId}`);
+  }
+
+  // Import the style if it's from a library
+  let style;
+  try {
+    style = await figma.importStyleByKeyAsync(fillStyleId);
+  } catch (e) {
+    // If import fails, try to get it directly (local style)
+    style = figma.getStyleById(fillStyleId);
+  }
+
+  if (style) {
+    node.fillStyleId = style.id;
+  } else {
+    // Try setting directly if the ID is already a valid local ID
+    node.fillStyleId = fillStyleId;
+  }
+
+  return {
+    id: node.id,
+    name: node.name,
+    fillStyleId: node.fillStyleId
+  };
+}
+
+/**
+ * Apply a stroke style to a node
+ */
+async function setStrokeStyleId(params) {
+  const { nodeId, strokeStyleId } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+  if (!strokeStyleId) {
+    throw new Error("Missing strokeStyleId parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  if (!('strokeStyleId' in node)) {
+    throw new Error(`Node does not support stroke styles: ${nodeId}`);
+  }
+
+  // Import the style if it's from a library
+  let style;
+  try {
+    style = await figma.importStyleByKeyAsync(strokeStyleId);
+  } catch (e) {
+    // If import fails, try to get it directly (local style)
+    style = figma.getStyleById(strokeStyleId);
+  }
+
+  if (style) {
+    node.strokeStyleId = style.id;
+  } else {
+    node.strokeStyleId = strokeStyleId;
+  }
+
+  return {
+    id: node.id,
+    name: node.name,
+    strokeStyleId: node.strokeStyleId
+  };
+}
+
+/**
+ * Apply a text style to a text node
+ */
+async function setTextStyleId(params) {
+  const { nodeId, textStyleId } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+  if (!textStyleId) {
+    throw new Error("Missing textStyleId parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  if (node.type !== 'TEXT') {
+    throw new Error(`Node must be a TEXT node, got: ${node.type}`);
+  }
+
+  // Import the style if it's from a library
+  let style;
+  try {
+    style = await figma.importStyleByKeyAsync(textStyleId);
+  } catch (e) {
+    // If import fails, try to get it directly (local style)
+    style = figma.getStyleById(textStyleId);
+  }
+
+  if (style) {
+    node.textStyleId = style.id;
+  } else {
+    node.textStyleId = textStyleId;
+  }
+
+  return {
+    id: node.id,
+    name: node.name,
+    textStyleId: node.textStyleId
+  };
+}
+
+/**
+ * Find a variable by its name
+ */
+async function resolveVariableByName(params) {
+  const { name, collectionName } = params || {};
+
+  if (!name) {
+    throw new Error("Missing name parameter");
+  }
+
+  const variables = await figma.variables.getLocalVariablesAsync();
+  const collections = await figma.variables.getLocalVariableCollectionsAsync();
+
+  // Create a map of collection IDs to names
+  const collectionMap = {};
+  for (const collection of collections) {
+    collectionMap[collection.id] = collection.name;
+  }
+
+  // Find matching variables
+  const matches = [];
+  for (const variable of variables) {
+    const varCollectionName = collectionMap[variable.variableCollectionId];
+
+    // Check if name matches (case-insensitive)
+    const nameMatches = variable.name.toLowerCase() === name.toLowerCase() ||
+                        variable.name.toLowerCase().includes(name.toLowerCase());
+
+    // Check if collection matches (if specified)
+    const collectionMatches = !collectionName ||
+                               (varCollectionName && varCollectionName.toLowerCase().includes(collectionName.toLowerCase()));
+
+    if (nameMatches && collectionMatches) {
+      // Get value for default mode
+      const collection = collections.find(c => c.id === variable.variableCollectionId);
+      const defaultModeId = collection ? collection.defaultModeId : null;
+      const defaultValue = defaultModeId ? variable.valuesByMode[defaultModeId] : null;
+
+      matches.push({
+        id: variable.id,
+        name: variable.name,
+        resolvedType: variable.resolvedType,
+        collectionId: variable.variableCollectionId,
+        collectionName: varCollectionName,
+        defaultValue,
+        description: variable.description || ''
+      });
+    }
+  }
+
+  if (matches.length === 0) {
+    return {
+      found: false,
+      searchedName: name,
+      searchedCollection: collectionName || 'any',
+      message: `No variable found matching "${name}"${collectionName ? ` in collection "${collectionName}"` : ''}`
+    };
+  }
+
+  return {
+    found: true,
+    matchCount: matches.length,
+    matches
+  };
+}
+
+/**
+ * Clear a variable binding from a node
+ */
+async function clearVariableBinding(params) {
+  const { nodeId, field } = params || {};
+
+  if (!nodeId) {
+    throw new Error("Missing nodeId parameter");
+  }
+  if (!field) {
+    throw new Error("Missing field parameter");
+  }
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) {
+    throw new Error(`Node not found with ID: ${nodeId}`);
+  }
+
+  // Handle different field types
+  if (field === 'fills' && 'fills' in node) {
+    // Remove variable bindings from fills while keeping the visual value
+    const fills = node.fills.map(fill => {
+      if (fill.type === 'SOLID' && fill.boundVariables && fill.boundVariables.color) {
+        // Keep the resolved color but remove the binding
+        const newFill = { ...fill };
+        delete newFill.boundVariables;
+        return newFill;
+      }
+      return fill;
+    });
+    node.fills = fills;
+  } else if (field === 'strokes' && 'strokes' in node) {
+    const strokes = node.strokes.map(stroke => {
+      if (stroke.type === 'SOLID' && stroke.boundVariables && stroke.boundVariables.color) {
+        const newStroke = { ...stroke };
+        delete newStroke.boundVariables;
+        return newStroke;
+      }
+      return stroke;
+    });
+    node.strokes = strokes;
+  } else if (['width', 'height', 'opacity', 'cornerRadius'].includes(field)) {
+    // For bindable node fields, use setBoundVariable with null
+    if ('setBoundVariable' in node) {
+      try {
+        node.setBoundVariable(field, null);
+      } catch (e) {
+        throw new Error(`Cannot clear binding for field "${field}": ${e.message}`);
+      }
+    }
+  } else {
+    throw new Error(`Unsupported field for clearing binding: ${field}`);
+  }
+
+  return {
+    id: node.id,
+    name: node.name,
+    clearedField: field
   };
 }

@@ -22,7 +22,17 @@ All tools work standalone and can be adapted to other project structures.
 
 ---
 
-## New in v0.8.0 - Comprehensive Figma-to-Code Pipeline
+## New in v0.9.0 - Variable Binding & Per-Document Caching
+
+| Feature | Description |
+|---------|-------------|
+| **Variable Binding** | Bind DaisyUI color variables to nodes for theme-compatible colors (light/dark mode) |
+| **Style Binding** | Apply fill, stroke, and text styles programmatically |
+| **Variable Caching** | Variables stored in local SQLite index with FTS5 search |
+| **Per-Document Databases** | Each Figma file gets its own cache - switch files seamlessly |
+| **DaisyUI Auto-Detection** | Variables automatically mapped to semantic names (primary, base-100, etc.) |
+
+### Previous: v0.8.0 - Comprehensive Figma-to-Code Pipeline
 
 | Feature | Description |
 |---------|-------------|
@@ -42,6 +52,7 @@ This fork adds powerful features for DaisyUI + Tailwind + HTMX workflows:
 | Feature | Benefit |
 |---------|---------|
 | **Local SQLite Index** | 100x faster queries - no Figma round-trips |
+| **Per-Document Caching** | Each Figma file gets its own database - switch files seamlessly |
 | **FTS5 Fuzzy Search** | Find components with natural language ("primary button") |
 | **DaisyUI Auto-Detection** | Automatic mapping of Figma nodes to DaisyUI classes |
 | **Tailwind Extraction** | Convert Figma styles to Tailwind utilities |
@@ -60,6 +71,7 @@ This fork adds powerful features for DaisyUI + Tailwind + HTMX workflows:
 |------|-------------|
 | `build_index` | Build local SQLite index from Figma document (auto-runs on first query) |
 | `index_status` | Check index health, sync status, invalidation state |
+| `list_cached_documents` | List all Figma documents that have been indexed locally |
 | `search` | Natural language search: "primary button", "login form" |
 | `list_components` | List all components in a category (buttons, forms, cards) |
 | `get_by_daisyui` | Find component by DaisyUI class (btn-primary) |
@@ -99,6 +111,30 @@ This fork adds powerful features for DaisyUI + Tailwind + HTMX workflows:
 | Tool | Description |
 |------|-------------|
 | `export_for_comparison` | Export frames for visual regression testing |
+
+### Variable & Style Binding Tools (NEW v0.9.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_local_variables` | Get all local variables (design tokens) organized by collection |
+| `get_variable_collections` | Get variable collections with modes (e.g., light/dark theme) |
+| `get_bound_variables` | Inspect which variables are bound to a node's properties |
+| `set_fill_variable` | Bind a color variable to a node's fill (theme-compatible) |
+| `set_stroke_variable` | Bind a color variable to a node's stroke |
+| `set_fill_style_id` | Apply a fill style to a node |
+| `set_stroke_style_id` | Apply a stroke style to a node |
+| `set_text_style_id` | Apply a text style to a text node |
+| `resolve_variable_by_name` | Find a variable ID by name (e.g., 'base-100', 'primary') |
+| `clear_variable_binding` | Remove a variable binding from a node property |
+
+### Variable Cache & Search Tools (NEW v0.9.0)
+
+| Tool | Description |
+|------|-------------|
+| `search_cached_variables` | Search locally cached variables by name/DaisyUI mapping |
+| `list_cached_color_variables` | List all color variables grouped by DaisyUI category |
+| `list_cached_variable_collections` | List variable collections with modes and counts |
+| `get_cached_variable_by_daisyui` | Find variable by DaisyUI name (e.g., 'primary', 'base-100') |
 
 ### Prototype & Interaction Tools
 
@@ -225,6 +261,23 @@ Example output:
 → Creates Python test helper with selectors
 ```
 
+### Variable & Style Binding (NEW v0.9.0)
+```
+"Get all DaisyUI color variables"
+→ Lists all color variables organized by collection (base, primary, secondary, etc.)
+
+"Bind the base-100 variable to the navbar background"
+→ Makes the fill theme-compatible (auto-switches light/dark)
+
+Example workflow:
+1. resolve_variable_by_name("base-100") → Get variable ID
+2. set_fill_variable(nodeId, variableId) → Bind to node
+→ Now the node's fill automatically adapts to theme changes
+
+"Check what variables are bound to this card"
+→ Shows all variable bindings for fills, strokes, and other properties
+```
+
 ### Prototype Interactions
 ```
 "Link the Login button to the Dashboard frame"
@@ -338,6 +391,17 @@ bun run test:integration # Integration testing
 ---
 
 ## Version History
+
+### 0.9.0 (DaisyUI Edition - Variable Binding & Caching)
+- **Variable Binding**: Bind Figma variables (design tokens) to node fills and strokes
+- **Theme-Compatible Colors**: Use `set_fill_variable` instead of hardcoded RGB for light/dark theme support
+- **Variable Discovery**: `get_local_variables`, `get_variable_collections`, `resolve_variable_by_name`
+- **Style Binding**: `set_fill_style_id`, `set_stroke_style_id`, `set_text_style_id`
+- **Variable Inspection**: `get_bound_variables` to see what's bound to a node
+- **Clear Bindings**: `clear_variable_binding` to remove variable connections
+- **Variable Caching**: Variables stored in SQLite with FTS5 search (`search_cached_variables`, `list_cached_color_variables`)
+- **Per-Document Databases**: Each Figma file gets its own SQLite database (`list_cached_documents`)
+- **DaisyUI Auto-Mapping**: Variables automatically mapped to semantic names (primary, base-100, etc.)
 
 ### 0.8.0 (DaisyUI Edition - Extended)
 - **Design Token Extraction**: Extract colors, spacing, typography → Tailwind config or CSS vars

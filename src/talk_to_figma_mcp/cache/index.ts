@@ -77,10 +77,46 @@ export interface SearchResult {
   relevance: number;
 }
 
+export interface IndexedVariableCollection {
+  id: string;
+  name: string;
+  modes: string | null;  // JSON array of mode objects
+  default_mode_id: string | null;
+  variable_count: number;
+  last_synced: string;
+}
+
+export interface IndexedVariable {
+  id: string;
+  name: string;
+  collection_id: string;
+  resolved_type: string;  // COLOR, FLOAT, STRING, BOOLEAN
+  daisyui_name: string | null;
+  daisyui_category: string | null;
+  values_by_mode: string | null;  // JSON object
+  hex: string | null;
+  rgb: string | null;
+  description: string | null;
+  scopes: string | null;  // JSON array
+  last_synced: string;
+}
+
+export interface VariableSearchResult {
+  id: string;
+  name: string;
+  collection_id: string;
+  resolved_type: string;
+  daisyui_name: string | null;
+  hex: string | null;
+  relevance: number;
+}
+
 class CacheManager {
   private db: Database | null = null;
   private dbPath: string;
   private migrationsPath: string;
+  private cacheDir: string;
+  private currentDocumentId: string | null = null;
 
   constructor() {
     // Get the directory where this module is located (works with Bun ESM)
@@ -91,10 +127,68 @@ class CacheManager {
     const packageRoot = path.resolve(moduleDir, '../..');
 
     // Default paths - can be overridden via environment
-    const cacheDir = process.env.FIGMA_CACHE_DIR || path.join(packageRoot, 'cache');
-    this.dbPath = process.env.FIGMA_INDEX_PATH || path.join(cacheDir, 'figma-index.db');
+    this.cacheDir = process.env.FIGMA_CACHE_DIR || path.join(packageRoot, 'cache');
+    // Default database path (used when no document ID is set)
+    this.dbPath = process.env.FIGMA_INDEX_PATH || path.join(this.cacheDir, 'figma-index.db');
     // Migrations are in the package root
     this.migrationsPath = path.join(packageRoot, 'migrations');
+  }
+
+  /**
+   * Set the current document ID and switch to its database
+   * Each Figma document gets its own SQLite database file
+   */
+  setDocumentId(documentId: string): void {
+    if (this.currentDocumentId === documentId && this.db) {
+      return; // Already using this document's database
+    }
+
+    // Close existing connection if switching documents
+    if (this.db && this.currentDocumentId !== documentId) {
+      this.close();
+    }
+
+    this.currentDocumentId = documentId;
+    // Sanitize document ID for filesystem (Figma IDs can contain special chars)
+    const safeId = documentId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    this.dbPath = path.join(this.cacheDir, `figma-index-${safeId}.db`);
+    logger.info(`Switched to database for document: ${documentId} (${this.dbPath})`);
+  }
+
+  /**
+   * Get the current document ID
+   */
+  getDocumentId(): string | null {
+    return this.currentDocumentId;
+  }
+
+  /**
+   * List all cached document databases
+   */
+  listCachedDocuments(): { documentId: string; dbPath: string; size: number; lastModified: Date }[] {
+    if (!fs.existsSync(this.cacheDir)) {
+      return [];
+    }
+
+    const files = fs.readdirSync(this.cacheDir);
+    const results: { documentId: string; dbPath: string; size: number; lastModified: Date }[] = [];
+
+    for (const file of files) {
+      if (file.startsWith('figma-index-') && file.endsWith('.db')) {
+        const fullPath = path.join(this.cacheDir, file);
+        const stats = fs.statSync(fullPath);
+        // Extract document ID from filename
+        const docId = file.replace('figma-index-', '').replace('.db', '');
+        results.push({
+          documentId: docId,
+          dbPath: fullPath,
+          size: stats.size,
+          lastModified: stats.mtime
+        });
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -555,6 +649,246 @@ class CacheManager {
   }
 
   // ============================================================
+  // VARIABLE COLLECTION OPERATIONS
+  // ============================================================
+
+  /**
+   * Upsert a variable collection
+   */
+  upsertVariableCollection(collection: Omit<IndexedVariableCollection, 'last_synced'>): void {
+    const db = this.getDb();
+    db.prepare(`
+      INSERT INTO variable_collections (id, name, modes, default_mode_id, variable_count)
+      VALUES ($id, $name, $modes, $default_mode_id, $variable_count)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        modes = excluded.modes,
+        default_mode_id = excluded.default_mode_id,
+        variable_count = excluded.variable_count,
+        last_synced = CURRENT_TIMESTAMP
+    `).run({
+      $id: collection.id,
+      $name: collection.name,
+      $modes: collection.modes,
+      $default_mode_id: collection.default_mode_id,
+      $variable_count: collection.variable_count,
+    });
+  }
+
+  /**
+   * Get all variable collections
+   */
+  getVariableCollections(): IndexedVariableCollection[] {
+    const db = this.getDb();
+    return db.prepare('SELECT * FROM variable_collections ORDER BY name').all() as IndexedVariableCollection[];
+  }
+
+  /**
+   * Get collection by ID
+   */
+  getVariableCollection(id: string): IndexedVariableCollection | undefined {
+    const db = this.getDb();
+    return db.prepare('SELECT * FROM variable_collections WHERE id = ?').get(id) as IndexedVariableCollection | undefined;
+  }
+
+  // ============================================================
+  // VARIABLE OPERATIONS
+  // ============================================================
+
+  /**
+   * Upsert a variable
+   */
+  upsertVariable(variable: Omit<IndexedVariable, 'last_synced'>): void {
+    const db = this.getDb();
+    db.prepare(`
+      INSERT INTO variables (
+        id, name, collection_id, resolved_type,
+        daisyui_name, daisyui_category, values_by_mode,
+        hex, rgb, description, scopes
+      ) VALUES (
+        $id, $name, $collection_id, $resolved_type,
+        $daisyui_name, $daisyui_category, $values_by_mode,
+        $hex, $rgb, $description, $scopes
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        collection_id = excluded.collection_id,
+        resolved_type = excluded.resolved_type,
+        daisyui_name = excluded.daisyui_name,
+        daisyui_category = excluded.daisyui_category,
+        values_by_mode = excluded.values_by_mode,
+        hex = excluded.hex,
+        rgb = excluded.rgb,
+        description = excluded.description,
+        scopes = excluded.scopes,
+        last_synced = CURRENT_TIMESTAMP
+    `).run({
+      $id: variable.id,
+      $name: variable.name,
+      $collection_id: variable.collection_id,
+      $resolved_type: variable.resolved_type,
+      $daisyui_name: variable.daisyui_name,
+      $daisyui_category: variable.daisyui_category,
+      $values_by_mode: variable.values_by_mode,
+      $hex: variable.hex,
+      $rgb: variable.rgb,
+      $description: variable.description,
+      $scopes: variable.scopes,
+    });
+  }
+
+  /**
+   * Bulk insert variables (faster than individual inserts)
+   */
+  bulkUpsertVariables(variables: Omit<IndexedVariable, 'last_synced'>[]): number {
+    const db = this.getDb();
+
+    const stmt = db.prepare(`
+      INSERT INTO variables (
+        id, name, collection_id, resolved_type,
+        daisyui_name, daisyui_category, values_by_mode,
+        hex, rgb, description, scopes
+      ) VALUES (
+        $id, $name, $collection_id, $resolved_type,
+        $daisyui_name, $daisyui_category, $values_by_mode,
+        $hex, $rgb, $description, $scopes
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        collection_id = excluded.collection_id,
+        resolved_type = excluded.resolved_type,
+        daisyui_name = excluded.daisyui_name,
+        daisyui_category = excluded.daisyui_category,
+        values_by_mode = excluded.values_by_mode,
+        hex = excluded.hex,
+        rgb = excluded.rgb,
+        description = excluded.description,
+        scopes = excluded.scopes,
+        last_synced = CURRENT_TIMESTAMP
+    `);
+
+    const insertMany = db.transaction(() => {
+      for (const variable of variables) {
+        stmt.run({
+          $id: variable.id,
+          $name: variable.name,
+          $collection_id: variable.collection_id,
+          $resolved_type: variable.resolved_type,
+          $daisyui_name: variable.daisyui_name,
+          $daisyui_category: variable.daisyui_category,
+          $values_by_mode: variable.values_by_mode,
+          $hex: variable.hex,
+          $rgb: variable.rgb,
+          $description: variable.description,
+          $scopes: variable.scopes,
+        });
+      }
+      return variables.length;
+    });
+
+    return insertMany();
+  }
+
+  /**
+   * Get variable by ID
+   */
+  getVariable(id: string): IndexedVariable | undefined {
+    const db = this.getDb();
+    return db.prepare('SELECT * FROM variables WHERE id = ?').get(id) as IndexedVariable | undefined;
+  }
+
+  /**
+   * Get variables by collection
+   */
+  getVariablesByCollection(collectionId: string): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables WHERE collection_id = ? ORDER BY name
+    `).all(collectionId) as IndexedVariable[];
+  }
+
+  /**
+   * Get variables by type (COLOR, FLOAT, STRING, BOOLEAN)
+   */
+  getVariablesByType(resolvedType: string): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables WHERE resolved_type = ? ORDER BY name
+    `).all(resolvedType) as IndexedVariable[];
+  }
+
+  /**
+   * Get all color variables
+   */
+  getColorVariables(): IndexedVariable[] {
+    return this.getVariablesByType('COLOR');
+  }
+
+  /**
+   * Get variable by DaisyUI name (e.g., 'primary', 'base-100')
+   */
+  getVariableByDaisyUIName(daisyuiName: string): IndexedVariable | undefined {
+    const db = this.getDb();
+    return db.prepare(`
+      SELECT * FROM variables WHERE daisyui_name = ?
+    `).get(daisyuiName) as IndexedVariable | undefined;
+  }
+
+  /**
+   * Search variables by name or DaisyUI mapping
+   */
+  searchVariables(query: string, options?: {
+    type?: string;
+    collectionId?: string;
+    limit?: number;
+  }): VariableSearchResult[] {
+    const db = this.getDb();
+    const limit = options?.limit || 20;
+
+    // Build FTS query
+    const ftsQuery = query.replace(/['"]/g, '').split(/\s+/).map(t => `"${t}"*`).join(' OR ');
+
+    let sql = `
+      SELECT
+        v.id,
+        v.name,
+        v.collection_id,
+        v.resolved_type,
+        v.daisyui_name,
+        v.hex,
+        bm25(variables_fts) as relevance
+      FROM variables_fts
+      JOIN variables v ON variables_fts.rowid = v.rowid
+      WHERE variables_fts MATCH ?
+    `;
+
+    const params: any[] = [ftsQuery];
+
+    if (options?.type) {
+      sql += ' AND v.resolved_type = ?';
+      params.push(options.type);
+    }
+
+    if (options?.collectionId) {
+      sql += ' AND v.collection_id = ?';
+      params.push(options.collectionId);
+    }
+
+    sql += ' ORDER BY relevance LIMIT ?';
+    params.push(limit);
+
+    return db.prepare(sql).all(...params) as VariableSearchResult[];
+  }
+
+  /**
+   * Get all variables
+   */
+  getAllVariables(): IndexedVariable[] {
+    const db = this.getDb();
+    return db.prepare('SELECT * FROM variables ORDER BY name').all() as IndexedVariable[];
+  }
+
+  // ============================================================
   // METADATA OPERATIONS
   // ============================================================
 
@@ -586,6 +920,8 @@ class CacheManager {
     node_count: number;
     component_count: number;
     page_count: number;
+    variable_count: number;
+    collection_count: number;
     last_synced: string | undefined;
   } {
     const db = this.getDb();
@@ -593,12 +929,16 @@ class CacheManager {
     const nodeCount = (db.prepare('SELECT COUNT(*) as count FROM nodes').get() as { count: number }).count;
     const componentCount = (db.prepare('SELECT COUNT(*) as count FROM components').get() as { count: number }).count;
     const pageCount = (db.prepare('SELECT COUNT(*) as count FROM pages').get() as { count: number }).count;
+    const variableCount = (db.prepare('SELECT COUNT(*) as count FROM variables').get() as { count: number }).count;
+    const collectionCount = (db.prepare('SELECT COUNT(*) as count FROM variable_collections').get() as { count: number }).count;
     const lastSynced = this.getMeta('last_full_sync');
 
     return {
       node_count: nodeCount,
       component_count: componentCount,
       page_count: pageCount,
+      variable_count: variableCount,
+      collection_count: collectionCount,
       last_synced: lastSynced
     };
   }
@@ -613,6 +953,8 @@ class CacheManager {
       DELETE FROM components;
       DELETE FROM pages;
       DELETE FROM design_tokens;
+      DELETE FROM variables;
+      DELETE FROM variable_collections;
     `);
     this.setMeta('last_full_sync', '');
   }
