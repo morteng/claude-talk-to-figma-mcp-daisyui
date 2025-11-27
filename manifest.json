@@ -1,0 +1,39 @@
+{
+  "dxt_version": "0.1",
+  "name": "claude-talk-to-figma-mcp-daisyui",
+  "display_name": "Claude Talk to Figma - DaisyUI Edition",
+  "description": "MCP plugin for Claude + Figma with DaisyUI detection, local caching, HTMX/Tailwind code generation, design tokens, accessibility audits, and real-time sync.",
+  "version": "0.8.0",
+  "author": {
+    "name": "DaisyUI Edition (Fork)",
+    "url": "https://github.com/morteng/claude-talk-to-figma-mcp-daisyui"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/morteng/claude-talk-to-figma-mcp-daisyui",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/morteng/claude-talk-to-figma-mcp-daisyui.git"
+  },
+  "icon": "images/claude-talk-to-figma.png",
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/talk_to_figma_mcp/server.cjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/talk_to_figma_mcp/server.cjs"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  },
+  "tools_generated": true
+}

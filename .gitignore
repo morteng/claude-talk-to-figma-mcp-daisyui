@@ -1,0 +1,38 @@
+node_modules/
+dist/
+docs/
+coverage/
+.cursor/
+
+# NPM lock file (project uses Bun as primary package manager)
+package-lock.json
+
+# DXT packages (build artifacts - distribute via releases only)
+*.dxt
+
+# macOS system files
+.DS_Store
+.DS_Store?
+
+# Logs and temp files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Temporary build directories
+temp-dxt/
+dxt-*/

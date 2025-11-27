@@ -1,0 +1,79 @@
+{
+  "name": "claude-talk-to-figma-mcp-daisyui",
+  "description": "Claude Talk to Figma MCP - DaisyUI Edition. Enhanced with local indexing, smart search, and HTMX/Tailwind code generation.",
+  "version": "0.8.0",
+  "module": "dist/talk_to_figma_mcp/server.js",
+  "main": "dist/talk_to_figma_mcp/server.js",
+  "bin": {
+    "claude-talk-to-figma-mcp": "dist/talk_to_figma_mcp/server.js",
+    "claude-talk-to-figma-mcp-socket": "dist/socket.js"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "readme.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "start": "bun run dist/talk_to_figma_mcp/server.js",
+    "socket": "bun run dist/socket.js",
+    "setup": "./scripts/setup.sh",
+    "build": "tsup && chmod +x dist/talk_to_figma_mcp/server.js dist/socket.js",
+    "build:win": "tsup",
+    "build:watch": "tsup --watch",
+    "dev": "bun run build:watch",
+    "pack": "dxt pack",
+    "sync-version": "VERSION=$(jq -r '.version' package.json) && jq --arg version \"$VERSION\" '.version = $version' manifest.json > manifest.tmp && mv manifest.tmp manifest.json",
+    "build:dxt": "npm run sync-version && npm run build && npm run pack",
+    "pub:release": "bun run build && npm publish",
+    "configure-claude": "node scripts/configure-claude.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:integration": "node scripts/test-integration.js",
+    "db:migrate": "bun run src/talk_to_figma_mcp/cache/migrate.ts"
+  },
+  "devDependencies": {
+    "@anthropic-ai/dxt": "^0.2.0",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/bun": "latest",
+    "@types/jest": "^29.5.12",
+    "bun-types": "^1.2.9",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "better-sqlite3": "^11.3.0",
+    "uuid": "latest",
+    "ws": "latest",
+    "yaml": "^2.8.1",
+    "zod": "latest"
+  },
+  "keywords": [
+    "claude",
+    "figma",
+    "mcp",
+    "plugin",
+    "ai",
+    "design",
+    "automation",
+    "daisyui",
+    "tailwind",
+    "htmx"
+  ],
+  "author": "Fork of arinspunk/claude-talk-to-figma-mcp - DaisyUI Edition",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/morteng/claude-talk-to-figma-mcp-daisyui.git"
+  },
+  "bugs": {
+    "url": "https://github.com/morteng/claude-talk-to-figma-mcp-daisyui/issues"
+  },
+  "homepage": "https://github.com/morteng/claude-talk-to-figma-mcp-daisyui#readme"
+}
