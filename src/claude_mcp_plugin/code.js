@@ -4556,10 +4556,10 @@ async function clearVariableBinding(params) {
   // Handle different field types
   if (field === 'fills' && 'fills' in node) {
     // Remove variable bindings from fills while keeping the visual value
-    const fills = node.fills.map(fill => {
+    const fills = node.fills.map(function(fill) {
       if (fill.type === 'SOLID' && fill.boundVariables && fill.boundVariables.color) {
         // Keep the resolved color but remove the binding
-        const newFill = { ...fill };
+        var newFill = Object.assign({}, fill);
         delete newFill.boundVariables;
         return newFill;
       }
@@ -4567,9 +4567,9 @@ async function clearVariableBinding(params) {
     });
     node.fills = fills;
   } else if (field === 'strokes' && 'strokes' in node) {
-    const strokes = node.strokes.map(stroke => {
+    var strokes = node.strokes.map(function(stroke) {
       if (stroke.type === 'SOLID' && stroke.boundVariables && stroke.boundVariables.color) {
-        const newStroke = { ...stroke };
+        var newStroke = Object.assign({}, stroke);
         delete newStroke.boundVariables;
         return newStroke;
       }
