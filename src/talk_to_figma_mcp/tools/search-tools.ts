@@ -252,10 +252,11 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
 
       // Get all local variables
       const variablesResult = await sendCommandToFigma("get_local_variables");
-      const variablesByCollection = (variablesResult as any).variables || {};
+      // Plugin returns { totalVariables, collections: [{ collectionId, variables }] }
+      const variableCollections = (variablesResult as any).collections || [];
 
-      for (const collectionName in variablesByCollection) {
-        const variables = variablesByCollection[collectionName] || [];
+      for (const collectionData of variableCollections) {
+        const variables = collectionData.variables || [];
 
         for (const variable of variables) {
           // Convert RGB to hex if available (for color variables)
@@ -291,10 +292,13 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
             }
           }
 
+          // Use collectionId from wrapper since plugin groups by collection
+          const collectionId = collectionData.collectionId || variable.collectionId || '';
+
           cache.upsertVariable({
             id: variable.id,
             name: variable.name,
-            collection_id: variable.collectionId || '',
+            collection_id: collectionId,
             resolved_type: variable.resolvedType || 'STRING',
             daisyui_name: classification.daisyuiName || null,
             daisyui_category: classification.daisyuiCategory || null,
@@ -320,8 +324,8 @@ async function buildIndexImpl(options: { pages?: string[], forceRebuild?: boolea
 
           // Also store per-mode values for multi-theme support
           if (variable.valuesByMode) {
-            // Get mode names from collection
-            const collection = collections.find((c: any) => c.id === variable.collectionId);
+            // Get mode names from collection (use collectionId from wrapper)
+            const collection = collections.find((c: any) => c.id === collectionId);
             const modes = collection?.modes || [];
 
             for (const [modeId, modeValue] of Object.entries(variable.valuesByMode)) {
